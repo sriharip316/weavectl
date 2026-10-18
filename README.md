@@ -2,8 +2,9 @@
 
 A kubectl-inspired control-plane CLI for [Weaviate](https://weaviate.io)
 databases, built for DBAs. It manages schema-level objects — **collections,
-roles, users, aliases, tenants** — over the REST API only. It never touches
-object data (`/objects`, `/batch`, `/graphql` are deliberately absent).
+roles, users, aliases, tenants** — and inspects cluster status (**shards,
+nodes**) over the REST API only. It never touches object data (`/objects`,
+`/batch`, `/graphql` are deliberately absent).
 
 ```
 $ weavectl get collections
@@ -15,8 +16,13 @@ MTNews            none        1            1       0           true
 
 ## Install
 
-```
-make install        # builds and copies to ~/.local/bin
+```bash
+# Install via Go:
+go install github.com/sriharip316/weavectl@latest
+
+# Or build from source:
+make build          # builds ./bin/weavectl
+make install        # builds and copies to ~/.local/bin/weavectl
 ```
 
 Requires Go 1.26+. Developed and verified against Weaviate **1.40.1**.
@@ -25,7 +31,7 @@ Requires Go 1.26+. Developed and verified against Weaviate **1.40.1**.
 
 Precedence, highest first:
 
-1. flags: `--server`, `--api-key` (also `--context`, `--config`)
+1. flags: `--server`, `--api-key` (also `--context`, `--config`, `--no-config`)
 2. environment: `WEAVECTL_SERVER`, `WEAVECTL_API_KEY`
 3. the context named by `current-context` in `~/.weavectl/config.yaml`
 4. default: `http://localhost:8080`
@@ -43,17 +49,19 @@ contexts:
     api-key: ${PROD_KEY}   # literal value; expand secrets out of band
 ```
 
+Use `--no-config` to bypass `~/.weavectl/config.yaml` entirely.
+
 Credentials are sent as `Authorization: Bearer <key>`, which covers both
 Weaviate API keys and OIDC bearer tokens.
 
 > The role and db-user commands need a server with RBAC and user management
 > enabled. For a local dev container:
 >
-> ```
-> make dev-up   # runs weaviate:1.40.1 with the flags below
+> ```bash
+> make dev-up   # runs docker.io/semitechnologies/weaviate:1.40.1 with podman
 > ```
 >
-> ```
+> ```env
 > AUTHENTICATION_APIKEY_ENABLED=true
 > AUTHENTICATION_APIKEY_ALLOWED_KEYS=root-key-1
 > AUTHENTICATION_APIKEY_USERS=admin@example.com
@@ -70,24 +78,41 @@ Weaviate API keys and OIDC bearer tokens.
 
 ### get — list or show objects
 
-```
-weavectl get collections [NAME]      # table by default
-weavectl get roles [NAME]
-weavectl get users [NAME]
-weavectl get aliases [NAME]
-weavectl get tenants COLLECTION
-weavectl get shards COLLECTION
-weavectl get nodes                   # cluster health
+```bash
+weavectl get collections [NAME]      # table by default (also accepts singular: collection)
+weavectl get roles [NAME]            # also accepts singular: role
+weavectl get users [NAME]            # also accepts singular: user
+weavectl get aliases [NAME]          # also accepts singular: alias
+weavectl get tenants COLLECTION      # tenants within a multi-tenant collection
+weavectl get shards COLLECTION       # shard states and vector queue sizes
+weavectl get nodes                   # cluster node health, versions, and modes
 ```
 
-`-o json` / `-o yaml` prints the API-native definition, so output
-round-trips: `weavectl get collection Articles -o yaml > a.yaml`, edit,
-`weavectl apply -f a.yaml`.
+Both singular and plural resource names are supported (`collection`/`collections`, `role`/`roles`, `user`/`users`, `alias`/`aliases`, `tenant`/`tenants`, `shard`/`shards`, `node`/`nodes`).
+
+Output formats with `-o`:
+- `-o table` (default, or `-o wide`): aligned columnar output.
+  - `collections`: `NAME`, `VECTORIZER`, `REPLICATION`, `SHARDS`, `PROPERTIES`, `MULTI-TENANT`
+  - `roles`: `NAME`, `PERMISSIONS`
+  - `users`: `USER ID`, `TYPE`, `ACTIVE`, `ROLES`
+  - `aliases`: `ALIAS`, `COLLECTION`
+  - `tenants`: `NAME`, `STATUS`
+  - `shards`: `NAME`, `STATUS`, `VECTOR QUEUE`
+  - `nodes`: `NAME`, `STATUS`, `VERSION`, `MODE`, `SHARDS`
+- `-o json`: raw API JSON (single object if named, JSON array if listing).
+- `-o yaml` (or `-o yml`): API-native YAML (single document or `---` separated).
+
+Because `-o yaml` outputs API-native definitions, output round-trips cleanly:
+```bash
+weavectl get collection Articles -o yaml > articles.yaml
+# edit articles.yaml ...
+weavectl apply -f articles.yaml
+```
 
 ### create — insert new objects
 
-```
-weavectl create -f manifest.yaml            # any kind, from file or "-"
+```bash
+weavectl create -f manifest.yaml            # any kind, from file or "-" (stdin)
 weavectl create collection NAME [--replication-factor N] [--vectorizer MODULE]
                                             [--shard-count N] [--multi-tenancy]
 weavectl create user NAME                   # prints the API key exactly once
@@ -95,19 +120,25 @@ weavectl create alias NAME --collection CLASS
 weavectl create tenant COLLECTION NAME... [--activity-status ACTIVE]
 ```
 
-`create` fails if the object already exists (use `apply` to converge).
+- `create` fails if the object already exists (use `apply` to converge).
+- Roles have structured permissions and are created from manifests via `weavectl create -f role.yaml`.
+- `create tenant` accepts multiple tenant names in a single invocation.
+- Creating a user outputs the generated API key once; Weaviate does not allow retrieving it again later.
 
 ### apply — create or update to match a manifest
 
-```
-weavectl apply -f manifest.yaml
+```bash
+weavectl apply -f manifest.yaml             # from file or "-" (stdin)
 ```
 
 Manifests are **raw Weaviate definitions** (JSON or YAML; multi-document
-YAML separated by `---`). See `examples/`. The kind is detected from the
-shape (`class` → collection, `name`+`permissions` → role, `userId` → user,
-`alias` → alias, `collection`+`tenants` → tenants), or set explicitly with
-a `kind:` key.
+YAML separated by `---`). The kind is detected from the shape:
+- `class` → collection
+- `name` + `permissions` → role
+- `userId` → user
+- `alias` + `class` → alias
+- `collection` + `tenants` → tenants
+- or set explicitly with a `kind:` key (`kind: collection`, `kind: role`, etc.)
 
 A single apply may issue several API requests, handled automatically:
 
@@ -129,24 +160,45 @@ A single apply may issue several API requests, handled automatically:
   updated. Tenants are **never deleted implicitly** — use
   `weavectl delete tenant`.
 
+Results report `<kind>/<name> created`, `<kind>/<name> configured`, or `<kind>/<name> unchanged`.
+
+#### Example Manifests (`examples/`)
+
+- [`examples/collection-articles.yaml`](examples/collection-articles.yaml): collection schema with indexing, bm25, replication, and properties.
+- [`examples/alias-articles.yaml`](examples/alias-articles.yaml): alias targeting a collection.
+- [`examples/role-editor.yaml`](examples/role-editor.yaml): RBAC role with fine-grained permissions.
+- [`examples/user-editor.yaml`](examples/user-editor.yaml): database user with role assignments.
+- [`examples/tenants-mtnews.yaml`](examples/tenants-mtnews.yaml): tenants in a multi-tenant collection.
+- [`examples/full-stack.yaml`](examples/full-stack.yaml): multi-document YAML applying a collection, role, and user in a single pass (`weavectl apply -f examples/full-stack.yaml`).
+
 ### delete — remove objects
 
-```
+```bash
 weavectl delete collection NAME
 weavectl delete role NAME
 weavectl delete user NAME
 weavectl delete alias NAME
 weavectl delete tenant COLLECTION NAME...
-weavectl delete -f manifest.yaml     # kind+name from the file
+weavectl delete -f manifest.yaml            # from file or "-" (stdin); kind+name from the file
 ```
 
 No confirmation prompts (kubectl behavior); deleting a collection deletes
-all its data.
+all its data. Name lookups are case-insensitive and confirm the canonical
+deleted object. Multiple tenants can be deleted in a single command.
+
+### completion — shell autocompletion
+
+```bash
+weavectl completion bash > /etc/bash_completion.d/weavectl
+weavectl completion zsh > "${fpath[1]}/_weavectl"
+weavectl completion fish > ~/.config/fish/completions/weavectl.fish
+weavectl completion powershell
+```
 
 ### version
 
-```
-weavectl version    # client + server version and endpoint
+```bash
+weavectl version    # client version + server version and endpoint from /v1/meta
 ```
 
 ## Name handling
@@ -154,7 +206,8 @@ weavectl version    # client + server version and endpoint
 Weaviate capitalizes the first letter of collection and alias names
 (`my_collection` is stored as `My_collection`). weavectl mirrors that
 client-side and additionally resolves names case-insensitively when
-referring to existing objects, so `get tenants mtnews` finds `MTNews`.
+referring to existing objects, so `get tenants mtnews` finds `MTNews`, and
+`delete collection articles` deletes `Articles`.
 
 ## Server behaviors worth knowing (verified on 1.40.1)
 
@@ -172,15 +225,23 @@ referring to existing objects, so `get tenants mtnews` finds `MTNews`.
   equivalent when diffing.
 - Role permissions read back with all default resource fields filled in
   (`"*"` etc.); the apply diff accounts for this.
+- Structured YAML output normalizes JSON numbers back to real integers and
+  floats so that exported manifests round-trip without type-mismatch errors.
 
 ## Development
 
-```
+```bash
 make build          # build ./bin/weavectl
 make test           # unit tests (fake server, no container needed)
+make coverage       # run tests and print function coverage summary
 make dev-up         # start Weaviate 1.40.1 in podman (RBAC + db users on)
+make dev-logs       # tail logs from the dev container
 make integration    # full end-to-end run against the dev container
-make dev-down       # stop the container
+make dev-down       # stop and remove the container
+make vet            # run go vet
+make fmt            # run go fmt
+make lint           # run staticcheck, golangci-lint, govulncheck
+make clean          # clean bin, dist, and coverage.out
 ```
 
 Project layout:
@@ -193,6 +254,8 @@ internal/manifest/ manifest loading, multi-doc YAML, kind detection
 internal/apply/    per-kind create-or-update orchestration
 internal/printer/  table / json / yaml output
 internal/config/   flags > env > config-file contexts
+examples/          ready-to-apply manifest definitions
+scripts/           integration test suite
 ```
 
 ## Scope and non-goals
