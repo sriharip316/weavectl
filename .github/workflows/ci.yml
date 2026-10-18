@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l cmd internal main.go)
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test -race ./...
+
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  integration:
+    name: integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      weaviate:
+        image: semitechnologies/weaviate:1.40.1
+        env:
+          AUTHENTICATION_APIKEY_ENABLED: "true"
+          AUTHENTICATION_APIKEY_ALLOWED_KEYS: root-key-1
+          AUTHENTICATION_APIKEY_USERS: admin@example.com
+          AUTHENTICATION_DB_USERS_ENABLED: "true"
+          AUTHORIZATION_RBAC_ENABLED: "true"
+          AUTHORIZATION_RBAC_ROOT_USERS: admin@example.com
+          DEFAULT_VECTORIZER_MODULE: none
+        ports:
+          - 8080:8080
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Build weavectl
+        run: go build -o bin/weavectl .
+      - name: Wait for Weaviate
+        run: |
+          for _ in $(seq 1 60); do
+            if curl -sf http://localhost:8080/v1/.well-known/ready >/dev/null; then
+              echo "Weaviate ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Weaviate did not become ready in time"
+          exit 1
+      - name: Run integration suite
+        env:
+          WEAVECTL_SERVER: http://localhost:8080
+          WEAVECTL_API_KEY: root-key-1
+        run: bash scripts/integration.sh

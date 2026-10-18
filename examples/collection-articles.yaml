@@ -1,0 +1,22 @@
+# A Weaviate collection definition, exactly as the API accepts it.
+# Apply it with: weavectl apply -f collection-articles.yaml
+class: Articles
+description: news articles
+vectorizer: none
+replicationConfig:
+  factor: 1
+invertedIndexConfig:
+  cleanupIntervalSeconds: 60
+  bm25:
+    k1: 1.2
+    b: 0.75
+properties:
+  - name: title
+    dataType: [text]
+    description: article headline
+    tokenization: word
+  - name: url
+    dataType: [text]
+    indexFilterable: true
+  - name: publishedAt
+    dataType: [date]

@@ -1,0 +1,4 @@
+# A db user with its desired roles. On first apply the user is created and
+# the one-time API key is printed; role assignments converge to this list.
+userId: editor
+roles: [editor]

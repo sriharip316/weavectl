@@ -1,0 +1,20 @@
+# A Weaviate RBAC role. Permissions use the raw API shape:
+# action + one resource object per permission. Omitted resource fields
+# default to "*" server-side.
+name: editor
+permissions:
+  - action: read_collections
+    collections:
+      collection: Articles
+  - action: create_data
+    data:
+      collection: Articles
+  - action: read_data
+    data:
+      collection: Articles
+  - action: update_data
+    data:
+      collection: Articles
+  - action: read_aliases
+    aliases:
+      alias: Articles

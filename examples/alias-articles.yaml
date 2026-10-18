@@ -1,0 +1,4 @@
+# An alias pointing at a collection. Applying again with a different
+# class retargets the alias in place.
+alias: news
+class: Articles

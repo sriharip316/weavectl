@@ -1,0 +1,11 @@
+# Tenants of one multi-tenant collection. Applying creates missing tenants
+# and updates activity status; it never deletes unlisted tenants — remove
+# them explicitly with `weavectl delete tenant MTNews NAME`.
+# activityStatus accepts ACTIVE/INACTIVE/OFFLOADED (the server reports
+# them back as HOT/COLD/FROZEN).
+collection: MTNews
+tenants:
+  - name: tenant-a
+    activityStatus: ACTIVE
+  - name: tenant-b
+    activityStatus: INACTIVE

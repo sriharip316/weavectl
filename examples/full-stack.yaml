@@ -1,0 +1,19 @@
+# Multi-document YAML: apply creates or updates each object in order.
+class: Archive
+description: long-term archive
+vectorizer: none
+properties:
+  - name: doc
+    dataType: [text]
+---
+name: archivist
+permissions:
+  - action: read_collections
+    collections:
+      collection: Archive
+  - action: read_data
+    data:
+      collection: Archive
+---
+userId: archivist
+roles: [archivist]
