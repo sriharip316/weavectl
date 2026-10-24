@@ -1,0 +1,17 @@
+# A restore definition: backend + id select the backup to restore from,
+# and every other field is the raw restore API request body. Restores
+# always need the explicit kind key — without it, backend+id is detected
+# as a backup instead.
+#
+# The target cluster must have the same node count as the source, node
+# names must match (see node_mapping), and the restored collections must
+# not already exist.
+#
+# Apply with:  weavectl apply -f examples/restore-articles.yaml
+# Progress:    weavectl restore status filesystem articles-snapshot
+kind: Restore
+backend: filesystem
+id: articles-snapshot
+include:
+  - Articles
+overwriteAlias: true

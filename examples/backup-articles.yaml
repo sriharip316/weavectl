@@ -1,0 +1,13 @@
+# A backup definition: backend + id select the backup, and every other
+# field is the raw backup API request body. The kind key is optional —
+# backend+id is detected as a backup — but kept for clarity.
+#
+# Apply with:  weavectl apply -f examples/backup-articles.yaml
+# Progress:    weavectl get backups --backend filesystem articles-snapshot
+kind: Backup
+backend: filesystem
+id: articles-snapshot
+include:
+  - Articles
+config:
+  CPUPercentage: 60

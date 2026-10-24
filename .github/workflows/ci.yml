@@ -74,6 +74,8 @@ jobs:
           AUTHORIZATION_RBAC_ENABLED: "true"
           AUTHORIZATION_RBAC_ROOT_USERS: admin@example.com
           DEFAULT_VECTORIZER_MODULE: none
+          ENABLE_MODULES: backup-filesystem
+          BACKUP_FILESYSTEM_PATH: /tmp/weaviate-backups
         ports:
           - 8080:8080
     steps:

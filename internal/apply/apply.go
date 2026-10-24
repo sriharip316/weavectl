@@ -44,6 +44,10 @@ func Apply(c *client.Client, docs []manifest.Document) ([]Result, error) {
 			r, err = alias(c, doc)
 		case manifest.KindTenants:
 			r, err = tenants(c, doc)
+		case manifest.KindBackup:
+			r, err = backup(c, doc)
+		case manifest.KindRestore:
+			r, err = restore(c, doc)
 		default:
 			err = fmt.Errorf("cannot apply a %q object; add a kind field to the manifest", doc.Kind)
 		}
@@ -644,4 +648,117 @@ func tenantNames(ts []weaviate.Tenant) string {
 		names[i] = t.Name
 	}
 	return strings.Join(names, ", ")
+}
+
+// ---- backups and restore ----
+
+// Backup and restore manifests are raw API request bodies plus a
+// "backend" (and, for restore, "id") scoping field. Both operations are
+// one-shot on the server: apply either starts them or reports the
+// existing attempt — there is no "configured" action.
+
+func backup(c *client.Client, doc manifest.Document) (Result, error) {
+	backend := weaviate.NormalizeBackend(doc.Backend())
+	body, err := weaviate.PrepareBackupBody(doc.Object)
+	if err != nil {
+		return Result{}, err
+	}
+	id := doc.BackupID()
+	res := Result{Name: backend + "/" + id}
+
+	current, err := weaviate.GetBackupStatus(c, backend, id, weaviate.StatusQuery{})
+	if err == nil {
+		terminal, success := weaviate.BackupPhaseDone(current.Status)
+		switch {
+		case success:
+			res.Action = "unchanged"
+			res.Info = append(res.Info,
+				"backup already exists (completed at "+strOrDash(current.CompletedAt)+")")
+			return res, nil
+		case !terminal:
+			res.Action = "unchanged"
+			res.Info = append(res.Info, "backup in progress: "+current.Status)
+			return res, nil
+		default:
+			res.Info = append(res.Info,
+				"previous attempt "+current.Status+errSuffix(current.Error)+", restarting")
+		}
+	} else if !client.IsNotFound(err) {
+		return res, err
+	}
+
+	created, err := weaviate.CreateBackup(c, backend, body)
+	if err != nil {
+		return res, err
+	}
+	res.Action = "created"
+	res.Info = append(res.Info, startedInfo("backup", created.Classes))
+	res.Info = append(res.Info,
+		fmt.Sprintf("check progress: weavectl get backups --backend %s %s", backend, id))
+	return res, nil
+}
+
+func restore(c *client.Client, doc manifest.Document) (Result, error) {
+	backend := weaviate.NormalizeBackend(doc.Backend())
+	id := doc.BackupID()
+	if err := weaviate.ValidateBackupID(id); err != nil {
+		return Result{}, err
+	}
+	body, err := weaviate.PrepareRestoreBody(doc.Object)
+	if err != nil {
+		return Result{}, err
+	}
+	res := Result{Name: backend + "/" + id}
+
+	current, err := weaviate.GetRestoreStatus(c, backend, id, weaviate.StatusQuery{})
+	if err == nil {
+		terminal, success := weaviate.BackupPhaseDone(current.Status)
+		switch {
+		case success:
+			res.Action = "unchanged"
+			res.Info = append(res.Info, "already restored")
+			return res, nil
+		case !terminal:
+			res.Action = "unchanged"
+			res.Info = append(res.Info, "restore in progress: "+current.Status)
+			return res, nil
+		default:
+			res.Info = append(res.Info,
+				"previous attempt "+current.Status+errSuffix(current.Error)+", restarting")
+		}
+	} else if !client.IsNotFound(err) {
+		return res, err
+	}
+
+	started, err := weaviate.RestoreBackup(c, backend, id, body)
+	if err != nil {
+		return res, err
+	}
+	res.Action = "created"
+	res.Info = append(res.Info, startedInfo("restore", started.Classes))
+	res.Info = append(res.Info,
+		fmt.Sprintf("check progress: weavectl restore status %s %s", backend, id))
+	return res, nil
+}
+
+func startedInfo(what string, classes []string) string {
+	if len(classes) == 0 {
+		return what + " started"
+	}
+	return what + " started (collections: " + strings.Join(classes, ", ") + ")"
+}
+
+// errSuffix renders a server-reported failure reason, if any.
+func errSuffix(msg string) string {
+	if msg == "" {
+		return ""
+	}
+	return ": " + msg
+}
+
+func strOrDash(s string) string {
+	if s == "" {
+		return "unknown time"
+	}
+	return s
 }

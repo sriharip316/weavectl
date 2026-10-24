@@ -19,10 +19,11 @@ func newGetCommand() *cobra.Command {
 		Short: "Display one or many objects",
 		Long: `Display one or many objects as a table, or as JSON/YAML with -o.
 
-Types: collections, roles, users, aliases, tenants, shards, nodes.
-For collections, roles, users and aliases an optional NAME narrows the
-result to a single object. tenants and shards take a COLLECTION name
-instead; nodes lists cluster nodes.`,
+Types: collections, roles, users, aliases, tenants, shards, nodes,
+backups. For collections, roles, users and aliases an optional NAME
+narrows the result to a single object. tenants and shards take a
+COLLECTION name instead; nodes lists cluster nodes; backups are listed
+per backend with --backend.`,
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			format, err := printer.ParseFormat(outputFlag(cmd))
@@ -45,6 +46,7 @@ instead; nodes lists cluster nodes.`,
 		},
 	}
 	cmd.Flags().StringP("output", "o", "table", "output format: table, json or yaml")
+	cmd.Flags().String("backend", "", "backup backend (required for the backups type)")
 	return cmd
 }
 
@@ -215,6 +217,33 @@ func runGet(cmd *cobra.Command, c *client.Client, typ, name string, format print
 			rows[i] = []string{n.Name, n.Status, n.Version, n.OperationalMode, shardCount}
 		}
 		return printObjects(out, format, items, []string{"NAME", "STATUS", "VERSION", "MODE", "SHARDS"}, rows...)
+
+	case "backups":
+		backend, _ := cmd.Flags().GetString("backend")
+		if backend == "" {
+			return fmt.Errorf("get backups requires a backend (weavectl get backups --backend filesystem [ID])")
+		}
+		backend = weaviate.NormalizeBackend(backend)
+		if single {
+			st, err := weaviate.GetBackupStatus(c, backend, name, weaviate.StatusQuery{})
+			if err != nil {
+				return notFoundWrap(err, "backup", backend+"/"+name)
+			}
+			return printObjects(out, format, []any{st}, backupStatusHeaders, backupStatusRow(*st))
+		}
+		list, err := weaviate.ListBackups(c, backend)
+		if err != nil {
+			return err
+		}
+		items := make([]any, len(list))
+		rows := make([][]string, len(list))
+		for i, e := range list {
+			// Structured output is manifest-shaped so exported YAML
+			// round-trips through apply.
+			items[i] = backupManifest(backend, e)
+			rows[i] = backupRow(e)
+		}
+		return printObjects(out, format, items, backupHeaders, rows...)
 	}
 	return fmt.Errorf("unsupported type %q", typ)
 }

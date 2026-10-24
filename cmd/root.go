@@ -27,10 +27,11 @@ var (
 func NewRootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "weavectl",
-		Short: "Manage Weaviate collections, roles, users, aliases and tenants",
+		Short: "Manage Weaviate collections, roles, users, aliases, tenants and backups",
 		Long: `weavectl is a DBA control-plane tool for Weaviate databases, inspired
-by kubectl. It manages schema-level objects only (collections, roles,
-users, aliases, tenants); it never touches object data.
+by kubectl. It manages schema-level objects (collections, roles, users,
+aliases, tenants) and orchestrates backups and restores; apart from
+backup and restore it never touches object data.
 
 Configuration is resolved from flags, then WEAVECTL_SERVER /
 WEAVECTL_API_KEY environment variables, then the named context in
@@ -51,6 +52,7 @@ WEAVECTL_API_KEY environment variables, then the named context in
 		newCreateCommand(),
 		newApplyCommand(),
 		newDeleteCommand(),
+		newRestoreCommand(),
 		newVersionCommand(),
 	)
 	return root
@@ -105,13 +107,14 @@ var resourceTypes = map[string]string{
 	"tenant": "tenants", "tenants": "tenants",
 	"shard": "shards", "shards": "shards",
 	"node": "nodes", "nodes": "nodes",
+	"backup": "backups", "backups": "backups",
 }
 
 func resolveType(arg string) (string, error) {
 	if t, ok := resourceTypes[strings.ToLower(arg)]; ok {
 		return t, nil
 	}
-	return "", fmt.Errorf("unknown resource type %q (want one of: collections, roles, users, aliases, tenants, shards, nodes)", arg)
+	return "", fmt.Errorf("unknown resource type %q (want one of: collections, roles, users, aliases, tenants, shards, nodes, backups)", arg)
 }
 
 func Execute() {

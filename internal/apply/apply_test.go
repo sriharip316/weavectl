@@ -24,10 +24,44 @@ type fakeWeaviate struct {
 	users       map[string][]string // userID -> roles
 	aliases     map[string]string   // alias -> class
 	tenants     map[string][]map[string]any
+	backups     map[string]*backupState // "backend/id" -> scripted statuses
+	restores    map[string]*backupState
 	// schemaGetStatus, when non-zero, is returned by GET /v1/schema/{name}
 	// to simulate server errors during collection lookups.
 	schemaGetStatus int
 	calls           []string
+}
+
+// backupState scripts the statuses a backup or restore moves through;
+// each status GET returns the next entry, sticking on the last.
+type backupState struct {
+	backend  string
+	id       string
+	classes  []string
+	statuses []string
+	gets     int
+	errMsg   string
+}
+
+func (s *backupState) advance() string {
+	i := s.gets
+	if i >= len(s.statuses) {
+		i = len(s.statuses) - 1
+	}
+	s.gets++
+	return s.statuses[i]
+}
+
+func (s *backupState) statusResponse() map[string]any {
+	status := s.advance()
+	resp := map[string]any{"id": s.id, "backend": s.backend, "status": status}
+	if status == "SUCCESS" {
+		resp["completedAt"] = "2026-01-01T10:01:00Z"
+	}
+	if s.errMsg != "" && (status == "FAILED" || status == "CANCELED") {
+		resp["error"] = s.errMsg
+	}
+	return resp
 }
 
 func newFake() *fakeWeaviate {
@@ -37,6 +71,8 @@ func newFake() *fakeWeaviate {
 		users:       map[string][]string{},
 		aliases:     map[string]string{},
 		tenants:     map[string][]map[string]any{},
+		backups:     map[string]*backupState{},
+		restores:    map[string]*backupState{},
 	}
 }
 
@@ -264,6 +300,67 @@ func (f *fakeWeaviate) handler() http.Handler {
 		defer f.mu.Unlock()
 		f.record("PUT tenants %s", r.PathValue("name"))
 		w.WriteHeader(http.StatusOK)
+	})
+
+	mux.HandleFunc("POST /v1/backups/{backend}", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		backend := r.PathValue("backend")
+		id, _ := body["id"].(string)
+		classes := []string{}
+		if inc, ok := body["include"].([]any); ok {
+			for _, class := range inc {
+				classes = append(classes, fmt.Sprint(class))
+			}
+		}
+		f.backups[backend+"/"+id] = &backupState{
+			backend: backend, id: id, classes: classes,
+			statuses: []string{"TRANSFERRING", "SUCCESS"},
+		}
+		f.record("POST /backups/%s %s include=%v", backend, id, body["include"])
+		writeJSON(w, http.StatusOK, map[string]any{
+			"id": id, "classes": classes, "backend": backend, "status": "STARTED",
+		})
+	})
+
+	mux.HandleFunc("GET /v1/backups/{backend}/{id}", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		st, ok := f.backups[r.PathValue("backend")+"/"+r.PathValue("id")]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		writeJSON(w, http.StatusOK, st.statusResponse())
+	})
+
+	mux.HandleFunc("POST /v1/backups/{backend}/{id}/restore", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		backend, id := r.PathValue("backend"), r.PathValue("id")
+		f.restores[backend+"/"+id] = &backupState{
+			backend: backend, id: id,
+			statuses: []string{"TRANSFERRING", "SUCCESS"},
+		}
+		f.record("POST restore %s/%s body=%v", backend, id, body)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"id": id, "backend": backend, "classes": []string{"Articles"}, "status": "STARTED",
+		})
+	})
+
+	mux.HandleFunc("GET /v1/backups/{backend}/{id}/restore", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		st, ok := f.restores[r.PathValue("backend")+"/"+r.PathValue("id")]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		writeJSON(w, http.StatusOK, st.statusResponse())
 	})
 
 	return mux
@@ -533,5 +630,139 @@ func TestTenantsApplyStatusEquivalence(t *testing.T) {
 	}
 	if res[0].Action != "configured" {
 		t.Fatalf("action = %q", res[0].Action)
+	}
+}
+
+// ---- backups and restore ----
+
+const backupManifest = `kind: Backup
+backend: filesystem
+id: snap-1
+include: [Articles]
+config:
+  CPUPercentage: 60
+`
+
+func TestBackupApplyLifecycle(t *testing.T) {
+	f := newFake()
+
+	// First apply starts the backup.
+	res, err := applyDocs(t, f, backupManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res[0].Action != "created" || res[0].Name != "filesystem/snap-1" {
+		t.Fatalf("res = %+v", res[0])
+	}
+	if len(res[0].Info) == 0 || !strings.Contains(res[0].Info[0], "started (collections: Articles)") {
+		t.Fatalf("info = %v", res[0].Info)
+	}
+	if !strings.Contains(strings.Join(f.calls, "\n"), "POST /backups/filesystem snap-1 include=[Articles]") {
+		t.Errorf("create call missing: %v", f.calls)
+	}
+
+	// Second apply sees it still running.
+	res, err = applyDocs(t, f, backupManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res[0].Action != "unchanged" || !strings.Contains(strings.Join(res[0].Info, " "), "in progress: TRANSFERRING") {
+		t.Fatalf("res = %+v", res[0])
+	}
+
+	// Third apply sees it completed.
+	res, err = applyDocs(t, f, backupManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res[0].Action != "unchanged" || !strings.Contains(strings.Join(res[0].Info, " "), "already exists") {
+		t.Fatalf("res = %+v", res[0])
+	}
+}
+
+func TestBackupApplyRestartsFailedAttempt(t *testing.T) {
+	f := newFake()
+	f.backups["filesystem/snap-1"] = &backupState{
+		backend: "filesystem", id: "snap-1",
+		statuses: []string{"FAILED"}, errMsg: "disk full",
+	}
+
+	res, err := applyDocs(t, f, backupManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res[0].Action != "created" {
+		t.Fatalf("action = %q", res[0].Action)
+	}
+	if !strings.Contains(strings.Join(res[0].Info, " "), "previous attempt FAILED: disk full") {
+		t.Fatalf("info = %v", res[0].Info)
+	}
+}
+
+func TestBackupApplyValidation(t *testing.T) {
+	f := newFake()
+	if _, err := applyDocs(t, f, "kind: Backup\nbackend: filesystem\nid: snap-1\ninclude: [A]\nexclude: [B]\n"); err == nil {
+		t.Error("expected include+exclude rejection")
+	}
+	if _, err := applyDocs(t, f, "kind: Backup\nbackend: filesystem\nid: Bad Id\n"); err == nil {
+		t.Error("expected invalid id rejection")
+	}
+	if strings.Contains(strings.Join(f.calls, "\n"), "POST /backups") {
+		t.Errorf("no request may be sent for invalid manifests: %v", f.calls)
+	}
+}
+
+func TestRestoreApplyLifecycle(t *testing.T) {
+	f := newFake()
+	manifest := "kind: Restore\nbackend: filesystem\nid: snap-1\ninclude: [Articles]\noverwriteAlias: true\n"
+
+	res, err := applyDocs(t, f, manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res[0].Action != "created" || res[0].Name != "filesystem/snap-1" {
+		t.Fatalf("res = %+v", res[0])
+	}
+	joined := strings.Join(f.calls, "\n")
+	if !strings.Contains(joined, "POST restore filesystem/snap-1") {
+		t.Fatalf("restore call missing: %v", f.calls)
+	}
+	if !strings.Contains(joined, "overwriteAlias:true") {
+		t.Errorf("restore body must pass through raw fields: %v", f.calls)
+	}
+
+	res, err = applyDocs(t, f, manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res[0].Action != "unchanged" || !strings.Contains(strings.Join(res[0].Info, " "), "in progress: TRANSFERRING") {
+		t.Fatalf("res = %+v", res[0])
+	}
+
+	res, err = applyDocs(t, f, manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res[0].Action != "unchanged" || !strings.Contains(strings.Join(res[0].Info, " "), "already restored") {
+		t.Fatalf("res = %+v", res[0])
+	}
+}
+
+func TestRestoreApplyRestartsFailedAttempt(t *testing.T) {
+	f := newFake()
+	f.restores["filesystem/snap-1"] = &backupState{
+		backend: "filesystem", id: "snap-1",
+		statuses: []string{"FAILED"}, errMsg: "class exists",
+	}
+
+	res, err := applyDocs(t, f, "kind: Restore\nbackend: filesystem\nid: snap-1\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res[0].Action != "created" {
+		t.Fatalf("action = %q", res[0].Action)
+	}
+	if !strings.Contains(strings.Join(res[0].Info, " "), "previous attempt FAILED: class exists") {
+		t.Fatalf("info = %v", res[0].Info)
 	}
 }

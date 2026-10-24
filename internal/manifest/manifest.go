@@ -25,6 +25,8 @@ const (
 	KindUser       Kind = "user"
 	KindAlias      Kind = "alias"
 	KindTenants    Kind = "tenants"
+	KindBackup     Kind = "backup"
+	KindRestore    Kind = "restore"
 	KindUnknown    Kind = ""
 )
 
@@ -146,8 +148,12 @@ func classify(obj map[string]any) (Document, error) {
 		return Document{Kind: KindUser, Name: str(obj["userId"]), Object: obj}, nil
 	case str(obj["collection"]) != "" && has(obj, "tenants"):
 		return Document{Kind: KindTenants, Name: str(obj["collection"]), Object: obj}, nil
+	case str(obj["backend"]) != "" && str(obj["id"]) != "":
+		// A backup definition: backend + id select the backup; restore
+		// definitions look the same, so they must say "kind: Restore".
+		return Document{Kind: KindBackup, Name: backupDocName(obj), Object: obj}, nil
 	}
-	return Document{Object: obj}, fmt.Errorf("cannot determine object kind: expected a collection (class), role (name+permissions), user (userId), alias (alias+class), or tenants (collection+tenants) definition; add a \"kind\" field to make it explicit")
+	return Document{Object: obj}, fmt.Errorf("cannot determine object kind: expected a collection (class), role (name+permissions), user (userId), alias (alias+class), tenants (collection+tenants), or backup (backend+id) definition; add a \"kind\" field to make it explicit (a restore requires \"kind: Restore\")")
 }
 
 func (d *Document) fillName() error {
@@ -162,11 +168,32 @@ func (d *Document) fillName() error {
 		d.Name = str(d.Object["alias"])
 	case KindTenants:
 		d.Name = str(d.Object["collection"])
+	case KindBackup, KindRestore:
+		if str(d.Object["backend"]) == "" || str(d.Object["id"]) == "" {
+			return fmt.Errorf("manifest with kind %q requires \"backend\" and \"id\" fields", d.Kind)
+		}
+		d.Name = backupDocName(d.Object)
 	}
 	if d.Name == "" {
 		return fmt.Errorf("manifest with kind %q is missing its name field", d.Kind)
 	}
 	return nil
+}
+
+// backupDocName is the display name of a backup/restore document:
+// "backend/id". Backups and restores are scoped by both.
+func backupDocName(obj map[string]any) string {
+	return str(obj["backend"]) + "/" + str(obj["id"])
+}
+
+// Backend returns the backup backend a backup/restore document targets.
+func (d *Document) Backend() string {
+	return str(d.Object["backend"])
+}
+
+// BackupID returns the backup id a backup/restore document refers to.
+func (d *Document) BackupID() string {
+	return str(d.Object["id"])
 }
 
 // Tenants returns the composite tenants view of the document.

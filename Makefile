@@ -33,7 +33,8 @@ install: build
 	install -D $(DEST) $(HOME)/.local/bin/$(BINARY)
 
 # Run a local Weaviate with API-key auth, RBAC and db-user management
-# enabled — the configuration weavectl's role and user commands need.
+# enabled — the configuration weavectl's role and user commands need —
+# plus the filesystem backup module the backup/restore commands need.
 dev-up:
 	podman rm -f weavectl-dev >/dev/null 2>&1 || true
 	podman run -d --name weavectl-dev -p 8080:8080 \
@@ -44,6 +45,8 @@ dev-up:
 	  -e AUTHORIZATION_RBAC_ENABLED=true \
 	  -e AUTHORIZATION_RBAC_ROOT_USERS=admin@example.com \
 	  -e DEFAULT_VECTORIZER_MODULE=none \
+	  -e ENABLE_MODULES=backup-filesystem \
+	  -e BACKUP_FILESYSTEM_PATH=/tmp/weaviate-backups \
 	  $(IMAGE)
 	@until curl -sf http://localhost:8080/v1/.well-known/ready >/dev/null 2>&1; do sleep 1; done
 	@echo "Weaviate ready at http://localhost:8080 (api key: $(ROOTKEY))"

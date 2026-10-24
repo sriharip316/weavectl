@@ -18,6 +18,7 @@ func newDeleteCommand() *cobra.Command {
 
   weavectl delete collection NAME     (also: role, user, alias)
   weavectl delete tenant COLLECTION NAME...
+  weavectl delete backup BACKEND ID   (cancels an in-progress backup)
   weavectl delete -f FILE             ("-" for stdin; kind+name from the file)
 
 No confirmation prompts; deleting a collection deletes all its data.`,
@@ -70,6 +71,7 @@ No confirmation prompts; deleting a collection deletes all its data.`,
 				return resolved, weaviate.DeleteAlias(c, resolved)
 			}),
 		newDeleteTenantCommand(),
+		newDeleteBackupCommand(),
 	)
 	return cmd
 }
@@ -166,6 +168,18 @@ func deleteDoc(cmd *cobra.Command, c *client.Client, doc manifest.Document) erro
 			return err
 		}
 		_, _ = fmt.Fprintf(out, "tenant %q deleted: %s\n", collection, join(names))
+	case manifest.KindBackup:
+		name := weaviate.NormalizeBackend(doc.Backend()) + "/" + doc.BackupID()
+		if err := notFoundWrap(weaviate.CancelBackup(c, doc.Backend(), doc.BackupID(), weaviate.StatusQuery{}), "backup", name); err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(out, "backup %q canceled\n", name)
+	case manifest.KindRestore:
+		name := weaviate.NormalizeBackend(doc.Backend()) + "/" + doc.BackupID()
+		if err := notFoundWrap(weaviate.CancelRestore(c, doc.Backend(), doc.BackupID(), weaviate.StatusQuery{}), "restore", name); err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(out, "restore %q canceled\n", name)
 	default:
 		return fmt.Errorf("cannot determine object kind for the manifest; add a \"kind\" field")
 	}

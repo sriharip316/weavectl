@@ -2,8 +2,9 @@
 
 A kubectl-inspired control-plane CLI for [Weaviate](https://weaviate.io)
 databases, built for DBAs. It manages schema-level objects — **collections,
-roles, users, aliases, tenants** — and inspects cluster status (**shards,
-nodes**) over the REST API only. It never touches object data (`/objects`,
+roles, users, aliases, tenants** — orchestrates **backups and restores**,
+and inspects cluster status (**shards, nodes**) over the REST API only.
+Apart from backup and restore it never touches object data (`/objects`,
 `/batch`, `/graphql` are deliberately absent).
 
 ```
@@ -55,7 +56,8 @@ Credentials are sent as `Authorization: Bearer <key>`, which covers both
 Weaviate API keys and OIDC bearer tokens.
 
 > The role and db-user commands need a server with RBAC and user management
-> enabled. For a local dev container:
+> enabled; the backup/restore commands need a backup module. For a local
+> dev container:
 >
 > ```bash
 > make dev-up   # runs docker.io/semitechnologies/weaviate:1.40.1 with podman
@@ -68,6 +70,8 @@ Weaviate API keys and OIDC bearer tokens.
 > AUTHENTICATION_DB_USERS_ENABLED=true
 > AUTHORIZATION_RBAC_ENABLED=true
 > AUTHORIZATION_RBAC_ROOT_USERS=admin@example.com
+> ENABLE_MODULES=backup-filesystem
+> BACKUP_FILESYSTEM_PATH=/tmp/weaviate-backups
 > ```
 >
 > Note: with the older admin-list mode (`AUTHORIZATION_ADMINLIST_ENABLED`)
@@ -86,6 +90,7 @@ weavectl get aliases [NAME]          # also accepts singular: alias
 weavectl get tenants COLLECTION      # tenants within a multi-tenant collection
 weavectl get shards COLLECTION       # shard states and vector queue sizes
 weavectl get nodes                   # cluster node health, versions, and modes
+weavectl get backups --backend B [ID] # backups on a backend (ID shows one status)
 ```
 
 Both singular and plural resource names are supported (`collection`/`collections`, `role`/`roles`, `user`/`users`, `alias`/`aliases`, `tenant`/`tenants`, `shard`/`shards`, `node`/`nodes`).
@@ -99,6 +104,7 @@ Output formats with `-o`:
   - `tenants`: `NAME`, `STATUS`
   - `shards`: `NAME`, `STATUS`, `VECTOR QUEUE`
   - `nodes`: `NAME`, `STATUS`, `VERSION`, `MODE`, `SHARDS`
+  - `backups`: `ID`, `STATUS`, `CLASSES`, `SIZE (GIB)`, `STARTED`, `COMPLETED`, `BASE`
 - `-o json`: raw API JSON (single object if named, JSON array if listing).
 - `-o yaml` (or `-o yml`): API-native YAML (single document or `---` separated).
 
@@ -118,6 +124,7 @@ weavectl create collection NAME [--replication-factor N] [--vectorizer MODULE]
 weavectl create user NAME                   # prints the API key exactly once
 weavectl create alias NAME --collection CLASS
 weavectl create tenant COLLECTION NAME... [--activity-status ACTIVE]
+weavectl create backup BACKEND ID [--include A,B | --exclude C] [--wait]
 ```
 
 - `create` fails if the object already exists (use `apply` to converge).
@@ -138,6 +145,7 @@ YAML separated by `---`). The kind is detected from the shape:
 - `userId` → user
 - `alias` + `class` → alias
 - `collection` + `tenants` → tenants
+- `backend` + `id` → backup
 - or set explicitly with a `kind:` key (`kind: collection`, `kind: role`, etc.)
 
 A single apply may issue several API requests, handled automatically:
@@ -159,6 +167,9 @@ A single apply may issue several API requests, handled automatically:
 - **tenants**: missing tenants are created, changed activity statuses are
   updated. Tenants are **never deleted implicitly** — use
   `weavectl delete tenant`.
+- **backup / restore**: started if unknown; a running or completed attempt
+  reports `unchanged`; a `FAILED`/`CANCELED` attempt is restarted
+  (see [backup and restore](#backup-and-restore)).
 
 Results report `<kind>/<name> created`, `<kind>/<name> configured`, or `<kind>/<name> unchanged`.
 
@@ -169,6 +180,8 @@ Results report `<kind>/<name> created`, `<kind>/<name> configured`, or `<kind>/<
 - [`examples/role-editor.yaml`](examples/role-editor.yaml): RBAC role with fine-grained permissions.
 - [`examples/user-editor.yaml`](examples/user-editor.yaml): database user with role assignments.
 - [`examples/tenants-mtnews.yaml`](examples/tenants-mtnews.yaml): tenants in a multi-tenant collection.
+- [`examples/backup-articles.yaml`](examples/backup-articles.yaml): a backup of one collection on the filesystem backend.
+- [`examples/restore-articles.yaml`](examples/restore-articles.yaml): a restore from that backup.
 - [`examples/full-stack.yaml`](examples/full-stack.yaml): multi-document YAML applying a collection, role, and user in a single pass (`weavectl apply -f examples/full-stack.yaml`).
 
 ### delete — remove objects
@@ -179,12 +192,87 @@ weavectl delete role NAME
 weavectl delete user NAME
 weavectl delete alias NAME
 weavectl delete tenant COLLECTION NAME...
+weavectl delete backup BACKEND ID    # cancels an in-progress backup
 weavectl delete -f manifest.yaml            # from file or "-" (stdin); kind+name from the file
 ```
 
 No confirmation prompts (kubectl behavior); deleting a collection deletes
 all its data. Name lookups are case-insensitive and confirm the canonical
 deleted object. Multiple tenants can be deleted in a single command.
+
+### backup and restore
+
+Backups and restores are manifest-driven like everything else. A backup
+manifest is the raw backup API body plus `backend`/`id` scoping fields:
+
+```yaml
+# examples/backup-articles.yaml
+kind: Backup          # optional: backend+id is detected as a backup
+backend: filesystem
+id: articles-snapshot
+include: [Articles]   # or exclude: [...]; wildcards allowed; omit for all
+config:
+  CPUPercentage: 60
+```
+
+```bash
+weavectl apply -f examples/backup-articles.yaml   # start it
+weavectl get backups --backend filesystem         # list: ID, STATUS, SIZE, …
+weavectl get backups --backend filesystem articles-snapshot   # one status
+weavectl delete backup filesystem articles-snapshot           # cancel
+```
+
+A restore manifest selects the backup the same way — but always needs the
+explicit `kind: Restore` key, since `backend`+`id` alone means a backup:
+
+```yaml
+# examples/restore-articles.yaml
+kind: Restore
+backend: filesystem
+id: articles-snapshot
+include: [Articles]
+overwriteAlias: true
+```
+
+```bash
+weavectl apply -f examples/restore-articles.yaml  # start restoring
+weavectl restore status filesystem articles-snapshot
+weavectl restore cancel filesystem articles-snapshot
+```
+
+Behavior:
+
+- Applying a **backup** starts it if the id is unknown; a backup that is
+  running or already completed reports `unchanged`; a `FAILED`/`CANCELED`
+  attempt is restarted. Backups are one-shot — there is no `configured`.
+- Applying a **restore** works the same way: start, or report
+  `unchanged` when a restore is running or already succeeded.
+- Restore requirements (enforced by the server): the target cluster must
+  have the same node count as the source, node names must match (a
+  `node_mapping` body field can remap them), and the restored collections
+  must not already exist.
+- Backend credentials live in the server's configuration, not in weavectl.
+  For local testing `make dev-up` enables the `filesystem` backend module.
+- Backup ids must be URL-safe filesystem paths (lowercase, numbers,
+  `_`, `-`); validated client-side.
+
+Imperative quick forms (fire-and-forget; `--wait` polls to completion and
+exits non-zero on `FAILED`/`CANCELED`):
+
+```bash
+weavectl create backup filesystem snap-1 [--include A,B | --exclude C] \
+    [--include-users '*'] [--include-roles editor] [--cpu-percentage N] \
+    [--compression-level BestSpeed] [--bucket B] [--path P] \
+    [--incremental-of base-id] [--wait] [--wait-timeout 10m]
+weavectl restore filesystem snap-1 [--include A,B | --exclude C] \
+    [--node-mapping old=new] [--overwrite-alias] [--bucket B] [--path P] \
+    [--restore-roles noRestore|all] [--restore-users noRestore|all] \
+    [--wait] [--wait-timeout 10m]
+```
+
+`weavectl get backups --backend B -o yaml` exports backup definitions as
+manifests (with the backed-up classes as `include`), so exported YAML
+re-applies cleanly — see the backup round-trip in `scripts/integration.sh`.
 
 ### completion — shell autocompletion
 
@@ -225,6 +313,11 @@ referring to existing objects, so `get tenants mtnews` finds `MTNews`, and
   equivalent when diffing.
 - Role permissions read back with all default resource fields filled in
   (`"*"` etc.); the apply diff accounts for this.
+- Backups and restores are asynchronous: the create/restore POST returns
+  immediately with `status: STARTED`, and progress is tracked on the
+  status endpoints (`STARTED` → `TRANSFERRING` → `TRANSFERRED` →
+  `FINALIZING` → `SUCCESS`, or `FAILED`/`CANCELED`). A restore status is
+  `404` until a restore has been initiated for that backup id.
 - Structured YAML output normalizes JSON numbers back to real integers and
   floats so that exported manifests round-trip without type-mismatch errors.
 
@@ -247,7 +340,7 @@ make clean          # clean bin, dist, and coverage.out
 Project layout:
 
 ```
-cmd/               cobra commands (get/create/apply/delete/version)
+cmd/               cobra commands (get/create/apply/delete/restore/version)
 internal/client/   HTTP client: bearer auth, error normalization, 404 detection
 internal/weaviate/ typed wrappers per resource group
 internal/manifest/ manifest loading, multi-doc YAML, kind detection
@@ -261,6 +354,6 @@ scripts/           integration test suite
 ## Scope and non-goals
 
 No data-plane operations (objects, batches, GraphQL, search, aggregate).
-Backups, classifications, replication repair, OIDC groups, namespaces, and
+Classifications, replication repair, OIDC groups, namespaces, and
 user activate/deactivate/rotate-key are not implemented (the REST
 endpoints exist in `weaviate_api.json` if you want to extend).

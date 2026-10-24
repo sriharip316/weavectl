@@ -23,6 +23,7 @@ a subcommand for simple objects:
   weavectl create user NAME
   weavectl create alias NAME --collection CLASS
   weavectl create tenant COLLECTION NAME...
+  weavectl create backup BACKEND ID [--include A,B | --exclude C] [--wait]
 
 The file holds raw Weaviate definitions in JSON or YAML (multi-document
 YAML allowed); the object kind is detected from the fields, or taken from
@@ -51,6 +52,7 @@ already exists.`,
 		newCreateUserCommand(),
 		newCreateAliasCommand(),
 		newCreateTenantCommand(),
+		newCreateBackupCommand(),
 	)
 	return cmd
 }
@@ -121,6 +123,12 @@ func objectExists(c *client.Client, doc manifest.Document) (bool, error) {
 			}
 		}
 		return false, nil
+	case manifest.KindBackup:
+		_, err := weaviate.GetBackupStatus(c, doc.Backend(), doc.BackupID(), weaviate.StatusQuery{})
+		return !client.IsNotFound(err), errUnlessNotFound(err)
+	case manifest.KindRestore:
+		_, err := weaviate.GetRestoreStatus(c, doc.Backend(), doc.BackupID(), weaviate.StatusQuery{})
+		return !client.IsNotFound(err), errUnlessNotFound(err)
 	}
 	return false, fmt.Errorf("unsupported kind %q", doc.Kind)
 }

@@ -1,6 +1,6 @@
 // Package weaviate provides typed wrappers over the Weaviate v1 REST
 // endpoints that weavectl manages: collections (schema), authz roles, db
-// users, aliases, tenants, shards, and cluster status.
+// users, aliases, tenants, shards, cluster status, and backups.
 package weaviate
 
 import (

@@ -127,6 +127,30 @@ EOF
 $WEAVECTL apply -f /tmp/weavectl-case.yaml | expect_in "collection/Integration_books configured" "case apply"
 $WEAVECTL delete collection integration_books | expect_in 'collection "Integration_books" deleted' "canonical delete"
 
+step "backups: manifest-driven backup, export round-trip"
+$WEAVECTL apply -f examples/backup-articles.yaml | expect_in "backup/filesystem/articles-snapshot created" "backup apply"
+for _ in $(seq 1 60); do
+	$WEAVECTL get backups --backend filesystem articles-snapshot 2>/dev/null | grep -q SUCCESS && break
+	sleep 2
+done
+$WEAVECTL get backups --backend filesystem articles-snapshot | expect_in "SUCCESS" "backup completed"
+$WEAVECTL apply -f examples/backup-articles.yaml | expect_in "backup/filesystem/articles-snapshot unchanged" "backup idempotent"
+$WEAVECTL get backups --backend filesystem | expect_in "articles-snapshot" "backups table"
+$WEAVECTL get backups --backend filesystem -o yaml > /tmp/weavectl-backups.yaml
+$WEAVECTL apply -f /tmp/weavectl-backups.yaml | expect_in "backup/filesystem/articles-snapshot unchanged" "backup roundtrip"
+
+step "backups: imperative create with --wait, then delete-collection + restore"
+$WEAVECTL create backup filesystem articles-snapshot-2 --include Articles --wait \
+	| expect_in "status: SUCCESS" "create backup --wait"
+$WEAVECTL delete collection articles | expect_in 'collection "Articles" deleted' "delete for restore"
+$WEAVECTL apply -f examples/restore-articles.yaml | expect_in "restore/filesystem/articles-snapshot created" "restore apply"
+for _ in $(seq 1 60); do
+	$WEAVECTL restore status filesystem articles-snapshot 2>/dev/null | grep -q SUCCESS && break
+	sleep 2
+done
+$WEAVECTL restore status filesystem articles-snapshot | expect_in "SUCCESS" "restore completed"
+$WEAVECTL get collection articles | expect_in "Articles" "collection restored"
+
 step "error paths"
 expect_fail_in "(NotFound)" $WEAVECTL get collection does_not_exist
 expect_fail_in "(NotFound)" $WEAVECTL delete collection does_not_exist
