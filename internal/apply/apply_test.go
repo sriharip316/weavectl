@@ -22,6 +22,7 @@ type fakeWeaviate struct {
 	roles       map[string][]map[string]any
 	collections map[string]map[string]any
 	users       map[string][]string // userID -> roles
+	userActive  map[string]bool     // userID -> active; absent means true
 	aliases     map[string]string   // alias -> class
 	tenants     map[string][]map[string]any
 	backups     map[string]*backupState // "backend/id" -> scripted statuses
@@ -29,7 +30,10 @@ type fakeWeaviate struct {
 	// schemaGetStatus, when non-zero, is returned by GET /v1/schema/{name}
 	// to simulate server errors during collection lookups.
 	schemaGetStatus int
-	calls           []string
+	// userTransitionStatus, when non-zero, is returned by the user
+	// activate/deactivate endpoints to simulate a state race.
+	userTransitionStatus int
+	calls                []string
 }
 
 // backupState scripts the statuses a backup or restore moves through;
@@ -69,6 +73,7 @@ func newFake() *fakeWeaviate {
 		roles:       map[string][]map[string]any{},
 		collections: map[string]map[string]any{},
 		users:       map[string][]string{},
+		userActive:  map[string]bool{},
 		aliases:     map[string]string{},
 		tenants:     map[string][]map[string]any{},
 		backups:     map[string]*backupState{},
@@ -214,7 +219,11 @@ func (f *fakeWeaviate) handler() http.Handler {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"userId": id, "roles": roles, "active": true})
+		active := true
+		if v, ok := f.userActive[id]; ok {
+			active = v
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"userId": id, "roles": roles, "active": active})
 	})
 
 	mux.HandleFunc("POST /v1/users/db/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -224,6 +233,32 @@ func (f *fakeWeaviate) handler() http.Handler {
 		f.users[id] = []string{}
 		f.record("POST /users/db/%s", id)
 		writeJSON(w, http.StatusCreated, map[string]any{"apikey": "key-" + id})
+	})
+
+	mux.HandleFunc("POST /v1/users/db/{id}/activate", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		id := r.PathValue("id")
+		if f.userTransitionStatus != 0 {
+			writeErr(w, f.userTransitionStatus, "user already activated")
+			return
+		}
+		f.userActive[id] = true
+		f.record("POST activate %s", id)
+		w.WriteHeader(http.StatusOK)
+	})
+
+	mux.HandleFunc("POST /v1/users/db/{id}/deactivate", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		id := r.PathValue("id")
+		if f.userTransitionStatus != 0 {
+			writeErr(w, f.userTransitionStatus, "user already deactivated")
+			return
+		}
+		f.userActive[id] = false
+		f.record("POST deactivate %s", id)
+		w.WriteHeader(http.StatusOK)
 	})
 
 	mux.HandleFunc("POST /v1/authz/users/{id}/assign", func(w http.ResponseWriter, r *http.Request) {
@@ -580,6 +615,97 @@ func TestUserApplyConvergesRoles(t *testing.T) {
 	}
 	if !strings.Contains(joined, "revoke [old1 old2]") && !strings.Contains(joined, "revoke") {
 		t.Errorf("missing revoke: %v", f.calls)
+	}
+	if res[0].Action != "configured" {
+		t.Fatalf("action = %q", res[0].Action)
+	}
+}
+
+func TestUserApplyConvergesActiveState(t *testing.T) {
+	f := newFake()
+	f.users["bob"] = []string{"dev"}
+
+	res, err := applyDocs(t, f, "userId: bob\nactive: false\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res[0].Action != "configured" ||
+		!strings.Contains(strings.Join(res[0].Info, "; "), "deactivated user") {
+		t.Fatalf("expected deactivation, got %+v", res[0])
+	}
+	if !strings.Contains(strings.Join(f.calls, "\n"), "deactivate bob") {
+		t.Errorf("deactivate not called: %v", f.calls)
+	}
+
+	calls := len(f.calls)
+	res, err = applyDocs(t, f, "userId: bob\nactive: false\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res[0].Action != "unchanged" || len(f.calls) != calls {
+		t.Fatalf("expected unchanged no-op, got %+v calls=%v", res[0], f.calls)
+	}
+
+	res, err = applyDocs(t, f, "userId: bob\nactive: true\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res[0].Action != "configured" ||
+		!strings.Contains(strings.Join(res[0].Info, "; "), "activated user") {
+		t.Fatalf("expected reactivation, got %+v", res[0])
+	}
+
+	// Omitting the key leaves the state alone.
+	calls = len(f.calls)
+	res, err = applyDocs(t, f, "userId: bob\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res[0].Action != "unchanged" || len(f.calls) != calls {
+		t.Fatalf("expected unchanged without active key, got %+v calls=%v", res[0], f.calls)
+	}
+}
+
+func TestUserApplyCreateDeactivated(t *testing.T) {
+	f := newFake()
+	res, err := applyDocs(t, f, "userId: bob\nroles: [dev]\nactive: false\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res[0].Action != "created" {
+		t.Fatalf("action = %q", res[0].Action)
+	}
+	info := strings.Join(res[0].Info, "; ")
+	if !strings.Contains(info, "key-bob") || !strings.Contains(info, "deactivated user") {
+		t.Fatalf("expected api key and deactivation, got %q", info)
+	}
+	joined := strings.Join(f.calls, "\n")
+	if !strings.Contains(joined, "deactivate bob") || !strings.Contains(joined, "assign [dev]") {
+		t.Errorf("missing deactivate/assign: %v", f.calls)
+	}
+	if f.userActive["bob"] {
+		t.Errorf("user still active in fake: %v", f.userActive)
+	}
+}
+
+func TestUserApplyRejectsNonBoolActive(t *testing.T) {
+	f := newFake()
+	_, err := applyDocs(t, f, "userId: bob\nactive: sometimes\n")
+	if err == nil || !strings.Contains(err.Error(), `"active"`) {
+		t.Fatalf("expected active validation error, got %v", err)
+	}
+	if len(f.calls) != 0 {
+		t.Errorf("no API calls expected, got %v", f.calls)
+	}
+}
+
+func TestUserApplyToleratesTransitionConflict(t *testing.T) {
+	f := newFake()
+	f.users["bob"] = []string{"dev"}
+	f.userTransitionStatus = http.StatusConflict
+	res, err := applyDocs(t, f, "userId: bob\nactive: false\n")
+	if err != nil {
+		t.Fatalf("409 should be tolerated: %v", err)
 	}
 	if res[0].Action != "configured" {
 		t.Fatalf("action = %q", res[0].Action)

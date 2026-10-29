@@ -89,6 +89,18 @@ $WEAVECTL apply -f examples/user-editor.yaml | expect_in "user/editor" "user app
 $WEAVECTL apply -f examples/user-editor.yaml | expect_in "user/editor unchanged" "user idempotent"
 $WEAVECTL get user editor | expect_in "editor" "user table"
 
+step "users: activate/deactivate via apply"
+cat > /tmp/weavectl-user-off.yaml <<'EOF'
+userId: editor
+roles: [editor]
+active: false
+EOF
+$WEAVECTL apply -f /tmp/weavectl-user-off.yaml | expect_in "user/editor configured" "user deactivate"
+$WEAVECTL apply -f /tmp/weavectl-user-off.yaml | expect_in "user/editor unchanged" "user deactivate idempotent"
+$WEAVECTL get user editor | expect_in "false" "user shows inactive"
+$WEAVECTL apply -f examples/user-editor.yaml | expect_in "user/editor configured" "user reactivate"
+$WEAVECTL apply -f examples/user-editor.yaml | expect_in "user/editor unchanged" "user reactivate idempotent"
+
 step "aliases"
 $WEAVECTL apply -f examples/alias-articles.yaml | expect_in "alias/News created" "alias create"
 sed 's/class: Articles/class: Integration_books/' examples/alias-articles.yaml > /tmp/weavectl-alias2.yaml

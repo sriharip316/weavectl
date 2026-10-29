@@ -321,6 +321,25 @@ func DeleteUser(c *client.Client, id string) error {
 	return err
 }
 
+// ActivateUser re-enables a deactivated db user; DeactivateUser disables
+// one while keeping its API key. The server answers 409 when the user is
+// already in the requested state, which apply treats as "nothing to do".
+func ActivateUser(c *client.Client, id string) error {
+	if strings.TrimSpace(id) == "" {
+		return &client.APIError{StatusCode: http.StatusNotFound}
+	}
+	_, err := c.Do(http.MethodPost, "/users/db/"+url.PathEscape(id)+"/activate", nil)
+	return err
+}
+
+func DeactivateUser(c *client.Client, id string) error {
+	if strings.TrimSpace(id) == "" {
+		return &client.APIError{StatusCode: http.StatusNotFound}
+	}
+	_, err := c.Do(http.MethodPost, "/users/db/"+url.PathEscape(id)+"/deactivate", nil)
+	return err
+}
+
 // AssignRoles grants roles to a user; RevokeRoles removes them.
 func AssignRoles(c *client.Client, userID string, roles []string) error {
 	_, err := c.Do(http.MethodPost, "/authz/users/"+url.PathEscape(userID)+"/assign",

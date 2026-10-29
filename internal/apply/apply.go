@@ -471,6 +471,16 @@ func user(c *client.Client, doc manifest.Document) (Result, error) {
 			}
 		}
 	}
+	// Like roles, "active" is converged only when the manifest carries the
+	// key; omitted leaves the user's current state alone.
+	desiredActive, hasActive := false, false
+	if raw, ok := doc.Object["active"]; ok {
+		b, ok := raw.(bool)
+		if !ok {
+			return Result{}, fmt.Errorf(`"active" must be true or false, got %v`, raw)
+		}
+		desiredActive, hasActive = b, true
+	}
 
 	current, err := weaviate.GetUser(c, userID)
 	res := Result{Name: userID}
@@ -482,6 +492,13 @@ func user(c *client.Client, doc manifest.Document) (Result, error) {
 		res.Action = "created"
 		res.Info = append(res.Info,
 			"API key (shown once, store it now): "+apiKey)
+		// CreateUser always yields an active user.
+		if hasActive && !desiredActive {
+			if err := weaviate.DeactivateUser(c, userID); err != nil {
+				return res, fmt.Errorf("deactivate user: %w", err)
+			}
+			res.Info = append(res.Info, "deactivated user")
+		}
 	} else if err != nil {
 		return res, err
 	} else {
@@ -503,6 +520,22 @@ func user(c *client.Client, doc manifest.Document) (Result, error) {
 			if len(toAssign)+len(toRevoke) > 0 {
 				res.Action = "configured"
 			}
+		}
+		if hasActive && current.Active != desiredActive {
+			// A 409 means the state flipped since the read; the desired
+			// state already holds, so treat it as success.
+			if desiredActive {
+				if err := weaviate.ActivateUser(c, userID); err != nil && !client.IsConflict(err) {
+					return res, fmt.Errorf("activate user: %w", err)
+				}
+				res.Info = append(res.Info, "activated user")
+			} else {
+				if err := weaviate.DeactivateUser(c, userID); err != nil && !client.IsConflict(err) {
+					return res, fmt.Errorf("deactivate user: %w", err)
+				}
+				res.Info = append(res.Info, "deactivated user")
+			}
+			res.Action = "configured"
 		}
 	}
 

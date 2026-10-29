@@ -388,6 +388,12 @@ func TestUsersEndpoints(t *testing.T) {
 	mux.HandleFunc("DELETE /v1/users/db/{id}", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
+	mux.HandleFunc("POST /v1/users/db/{id}/activate", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("POST /v1/users/db/{id}/deactivate", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
 	mux.HandleFunc("POST /v1/authz/users/{id}/assign", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -424,6 +430,18 @@ func TestUsersEndpoints(t *testing.T) {
 	}
 	if err := RevokeRoles(c, "alice", []string{"editor"}); err != nil {
 		t.Fatalf("RevokeRoles: %v", err)
+	}
+	if err := ActivateUser(c, "bob"); err != nil {
+		t.Fatalf("ActivateUser: %v", err)
+	}
+	if err := DeactivateUser(c, "bob"); err != nil {
+		t.Fatalf("DeactivateUser: %v", err)
+	}
+	if err := ActivateUser(c, ""); !client.IsNotFound(err) {
+		t.Fatalf("ActivateUser('') expected NotFound, got %v", err)
+	}
+	if err := DeactivateUser(c, ""); !client.IsNotFound(err) {
+		t.Fatalf("DeactivateUser('') expected NotFound, got %v", err)
 	}
 }
 

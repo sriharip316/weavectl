@@ -1,4 +1,7 @@
 # A db user with its desired roles. On first apply the user is created and
 # the one-time API key is printed; role assignments converge to this list.
+# "active" converges the login state: false deactivates the user (the API
+# key is kept), true re-activates; omit it to leave the state untouched.
 userId: editor
 roles: [editor]
+active: true

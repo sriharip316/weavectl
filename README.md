@@ -162,7 +162,11 @@ A single apply may issue several API requests, handled automatically:
   equal to explicit ones, so repeated applies are true no-ops.
 - **user**: if missing, created and the **one-time API key is printed**.
   Role assignments converge to the manifest (assign missing, revoke
-  unlisted).
+  unlisted). An optional `active: true|false` key converges the login
+  state: `false` deactivates the user (their API key is kept, so
+  `active: true` fully restores them), `true` re-activates; omitting the
+  key leaves the current state untouched. A new user created with
+  `active: false` is deactivated in the same apply.
 - **alias**: created, or retargeted (`PUT /v1/aliases/{name}`).
 - **tenants**: missing tenants are created, changed activity statuses are
   updated. Tenants are **never deleted implicitly** — use
@@ -355,5 +359,5 @@ scripts/           integration test suite
 
 No data-plane operations (objects, batches, GraphQL, search, aggregate).
 Classifications, replication repair, OIDC groups, namespaces, and
-user activate/deactivate/rotate-key are not implemented (the REST
-endpoints exist in `weaviate_api.json` if you want to extend).
+user rotate-key (and deactivate's `revoke_key` option) are not implemented
+(the REST endpoints exist in `weaviate_api.json` if you want to extend).

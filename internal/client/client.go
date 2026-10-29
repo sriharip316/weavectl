@@ -56,6 +56,12 @@ func IsNotFound(err error) bool {
 	return ok && apiErr.StatusCode == http.StatusNotFound
 }
 
+// IsConflict reports whether err is a 409 from the server.
+func IsConflict(err error) bool {
+	apiErr, ok := err.(*APIError)
+	return ok && apiErr.StatusCode == http.StatusConflict
+}
+
 // Client talks to a single Weaviate instance.
 type Client struct {
 	Server  string // base URL, e.g. http://localhost:8080

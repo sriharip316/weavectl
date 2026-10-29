@@ -328,6 +328,13 @@ func (m *mockServer) handler() http.Handler {
 		w.WriteHeader(http.StatusOK)
 	})
 
+	mux.HandleFunc("POST /v1/users/db/{id}/activate", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("POST /v1/users/db/{id}/deactivate", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
 	mux.HandleFunc("POST /v1/authz/users/{id}/assign", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -716,6 +723,34 @@ permissions:
 	_, _, err = executeCommand([]string{"apply", "-f", "nonexistent.yaml", "--server", srv.URL})
 	if err == nil {
 		t.Fatal("expected error for non-existent file")
+	}
+}
+
+func TestCLI_ApplyUserActiveState(t *testing.T) {
+	mock := newMockServer()
+	srv := httptest.NewServer(mock.handler())
+	defer srv.Close()
+
+	dir := t.TempDir()
+	userFile := filepath.Join(dir, "user-active.yaml")
+	_ = os.WriteFile(userFile, []byte("userId: bob\nroles: [dev]\nactive: false\n"), 0o644)
+
+	// New user: created, key shown, deactivated in the same apply.
+	out, _, err := executeCommand([]string{"apply", "-f", userFile, "--server", srv.URL})
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if !strings.Contains(out, "user/bob created") || !strings.Contains(out, "deactivated user") {
+		t.Fatalf("unexpected out: %q", out)
+	}
+
+	// Existing user (mock reports active): deactivated via apply.
+	out, _, err = executeCommand([]string{"apply", "-f", userFile, "--server", srv.URL})
+	if err != nil {
+		t.Fatalf("re-apply: %v", err)
+	}
+	if !strings.Contains(out, "user/bob configured") || !strings.Contains(out, "deactivated user") {
+		t.Fatalf("unexpected out: %q", out)
 	}
 }
 
