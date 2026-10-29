@@ -121,6 +121,12 @@ $WEAVECTL apply -f examples/full-stack.yaml | expect_in "role/archivist unchange
 step "create user prints one-time api key"
 $WEAVECTL create user keymaster | expect_in "API key (shown once" "user create key"
 
+step "rotate user revokes the old key"
+OLD_KEY=$($WEAVECTL create user rotator | sed -n 's/^API key (shown once, store it now): //p')
+$WEAVECTL rotate user rotator | expect_in "user/rotator rotated" "rotate user"
+$WEAVECTL rotate user rotator | expect_in "API key (shown once" "rotate shows new key"
+expect_fail_in "Error from server" $WEAVECTL get user rotator --api-key "$OLD_KEY"
+
 step "delete flows"
 $WEAVECTL delete tenant mtnews tenant-a | expect_in "deleted" "tenant delete"
 $WEAVECTL delete alias news | expect_in "deleted" "alias delete"

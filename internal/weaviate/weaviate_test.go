@@ -394,6 +394,9 @@ func TestUsersEndpoints(t *testing.T) {
 	mux.HandleFunc("POST /v1/users/db/{id}/deactivate", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
+	mux.HandleFunc("POST /v1/users/db/{id}/rotate-key", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"apikey": "rotated-key-456"})
+	})
 	mux.HandleFunc("POST /v1/authz/users/{id}/assign", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -442,6 +445,13 @@ func TestUsersEndpoints(t *testing.T) {
 	}
 	if err := DeactivateUser(c, ""); !client.IsNotFound(err) {
 		t.Fatalf("DeactivateUser('') expected NotFound, got %v", err)
+	}
+	apiKey, err = RotateUserKey(c, "bob")
+	if err != nil || apiKey != "rotated-key-456" {
+		t.Fatalf("RotateUserKey: %v (key=%q)", err, apiKey)
+	}
+	if _, err := RotateUserKey(c, ""); !client.IsNotFound(err) {
+		t.Fatalf("RotateUserKey('') expected NotFound, got %v", err)
 	}
 }
 

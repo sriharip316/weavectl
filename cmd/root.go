@@ -52,6 +52,7 @@ WEAVECTL_API_KEY environment variables, then the named context in
 		newCreateCommand(),
 		newApplyCommand(),
 		newDeleteCommand(),
+		newRotateCommand(),
 		newRestoreCommand(),
 		newVersionCommand(),
 	)

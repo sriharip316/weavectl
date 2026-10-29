@@ -313,6 +313,25 @@ func CreateUser(c *client.Client, id string) (apiKey string, err error) {
 	return out.APIKey, nil
 }
 
+// RotateUserKey revokes a db user's current API key and returns the newly
+// generated one exactly once; the old key stops authenticating immediately.
+func RotateUserKey(c *client.Client, id string) (apiKey string, err error) {
+	if strings.TrimSpace(id) == "" {
+		return "", &client.APIError{StatusCode: http.StatusNotFound}
+	}
+	raw, err := c.Do(http.MethodPost, "/users/db/"+url.PathEscape(id)+"/rotate-key", map[string]any{})
+	if err != nil {
+		return "", err
+	}
+	var out struct {
+		APIKey string `json:"apikey"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return "", fmt.Errorf("parse api key response: %w", err)
+	}
+	return out.APIKey, nil
+}
+
 func DeleteUser(c *client.Client, id string) error {
 	if strings.TrimSpace(id) == "" {
 		return &client.APIError{StatusCode: http.StatusNotFound}

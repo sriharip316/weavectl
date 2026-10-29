@@ -204,6 +204,25 @@ No confirmation prompts (kubectl behavior); deleting a collection deletes
 all its data. Name lookups are case-insensitive and confirm the canonical
 deleted object. Multiple tenants can be deleted in a single command.
 
+### rotate — replace a secret in place
+
+```bash
+weavectl rotate user NAME     # revokes the current API key, prints the new one once
+```
+
+Rotating a db user's API key **revokes the old key immediately** — every
+consumer of it (services, scripts, config files) stops authenticating and
+must be updated. The new key is printed exactly once, like `create user`;
+store it now.
+
+Rotation is deliberately imperative-only: there is no `rotateKey` manifest
+field and apply never rotates keys. The new key is a one-time secret that
+must be captured out of band (secret manager, workload redeploy), and the
+server keeps no "already rotated" state, so a manifest field could only
+mean "rotate on every apply" — re-applying a shared manifest would
+silently revoke live credentials. Treat rotation as an operator action:
+run it explicitly, then record the new key where your workloads get it.
+
 ### backup and restore
 
 Backups and restores are manifest-driven like everything else. A backup
@@ -344,7 +363,7 @@ make clean          # clean bin, dist, and coverage.out
 Project layout:
 
 ```
-cmd/               cobra commands (get/create/apply/delete/restore/version)
+cmd/               cobra commands (get/create/apply/delete/rotate/restore/version)
 internal/client/   HTTP client: bearer auth, error normalization, 404 detection
 internal/weaviate/ typed wrappers per resource group
 internal/manifest/ manifest loading, multi-doc YAML, kind detection
@@ -359,5 +378,6 @@ scripts/           integration test suite
 
 No data-plane operations (objects, batches, GraphQL, search, aggregate).
 Classifications, replication repair, OIDC groups, namespaces, and
-user rotate-key (and deactivate's `revoke_key` option) are not implemented
-(the REST endpoints exist in `weaviate_api.json` if you want to extend).
+deactivate's `revoke_key` option are not implemented
+(the REST endpoints exist in `weaviate_api.json` if you want to extend;
+user rotate-key is implemented as `weavectl rotate user`).

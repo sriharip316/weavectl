@@ -334,6 +334,16 @@ func (m *mockServer) handler() http.Handler {
 	mux.HandleFunc("POST /v1/users/db/{id}/deactivate", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
+	mux.HandleFunc("POST /v1/users/db/{id}/rotate-key", func(w http.ResponseWriter, r *http.Request) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		id := r.PathValue("id")
+		if _, ok := m.users[id]; !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"apikey": "rotated-key-" + id})
+	})
 
 	mux.HandleFunc("POST /v1/authz/users/{id}/assign", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -751,6 +761,27 @@ func TestCLI_ApplyUserActiveState(t *testing.T) {
 	}
 	if !strings.Contains(out, "user/bob configured") || !strings.Contains(out, "deactivated user") {
 		t.Fatalf("unexpected out: %q", out)
+	}
+}
+
+func TestCLI_RotateUser(t *testing.T) {
+	mock := newMockServer()
+	srv := httptest.NewServer(mock.handler())
+	defer srv.Close()
+
+	out, _, err := executeCommand([]string{"rotate", "user", "alice", "--server", srv.URL})
+	if err != nil {
+		t.Fatalf("rotate: %v", err)
+	}
+	if !strings.Contains(out, "user/alice rotated") ||
+		!strings.Contains(out, "API key (shown once, store it now): rotated-key-alice") {
+		t.Fatalf("unexpected out: %q", out)
+	}
+
+	// Unknown user: server 404, non-zero exit.
+	_, _, err = executeCommand([]string{"rotate", "user", "ghost", "--server", srv.URL})
+	if err == nil || !strings.Contains(err.Error(), "404") {
+		t.Fatalf("rotate ghost: expected 404 error, got %v", err)
 	}
 }
 
