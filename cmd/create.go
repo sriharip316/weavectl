@@ -103,10 +103,12 @@ func createFromDocs(cmd *cobra.Command, c *client.Client, docs []manifest.Docume
 		}
 	}
 	results, err := apply.Apply(c, docs)
+	if len(results) > 0 {
+		printResults(cmd, results)
+	}
 	if err != nil {
 		return err
 	}
-	printResults(cmd, results)
 	return nil
 }
 

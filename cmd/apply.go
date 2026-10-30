@@ -44,10 +44,12 @@ apply may issue several API calls, handled automatically:
 				return err
 			}
 			results, err := apply.Apply(c, docs)
+			if len(results) > 0 {
+				printResults(cmd, results)
+			}
 			if err != nil {
 				return err
 			}
-			printResults(cmd, results)
 			return nil
 		},
 	}

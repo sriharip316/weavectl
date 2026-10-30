@@ -15,13 +15,14 @@ import (
 
 // mockServer provides an in-memory Weaviate REST API for testing all CLI commands.
 type mockServer struct {
-	mu          sync.Mutex
-	collections map[string]map[string]any
-	roles       map[string][]map[string]any
-	users       map[string][]string // userID -> roles
-	aliases     map[string]string   // alias -> class
-	tenants     map[string][]map[string]any
-	shards      map[string][]map[string]any
+	mu               sync.Mutex
+	collections      map[string]map[string]any
+	roles            map[string][]map[string]any
+	users            map[string][]string // userID -> roles
+	aliases          map[string]string   // alias -> class
+	tenants          map[string][]map[string]any
+	shards           map[string][]map[string]any
+	userAssignStatus int
 }
 
 func newMockServer() *mockServer {
@@ -346,6 +347,12 @@ func (m *mockServer) handler() http.Handler {
 	})
 
 	mux.HandleFunc("POST /v1/authz/users/{id}/assign", func(w http.ResponseWriter, r *http.Request) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if m.userAssignStatus != 0 {
+			w.WriteHeader(m.userAssignStatus)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 	})
 	mux.HandleFunc("POST /v1/authz/users/{id}/revoke", func(w http.ResponseWriter, r *http.Request) {
@@ -794,6 +801,31 @@ tenants:
 	}
 }
 
+func TestCLI_CreateMultiDocPartialFailurePrintsKey(t *testing.T) {
+	mock := newMockServer()
+	srv := httptest.NewServer(mock.handler())
+	defer srv.Close()
+
+	dir := t.TempDir()
+	multiPath := filepath.Join(dir, "create_user_and_invalid.yaml")
+	_ = os.WriteFile(multiPath, []byte(`userId: createpartialuser
+---
+userId: baduser2
+active: not-a-bool
+`), 0o644)
+
+	out, _, err := executeCommand([]string{"create", "-f", multiPath, "--server", srv.URL})
+	if err == nil {
+		t.Fatal("expected create -f to fail on invalid active value")
+	}
+	if !strings.Contains(out, "user/createpartialuser created") {
+		t.Fatalf("expected stdout to report createpartialuser created, got: %q", out)
+	}
+	if !strings.Contains(out, "generated-key-createpartialuser") {
+		t.Fatalf("expected stdout to contain generated API key, got: %q", out)
+	}
+}
+
 func TestCLI_Apply(t *testing.T) {
 	mock := newMockServer()
 	srv := httptest.NewServer(mock.handler())
@@ -848,6 +880,59 @@ permissions:
 	_, _, err = executeCommand([]string{"apply", "-f", "nonexistent.yaml", "--server", srv.URL})
 	if err == nil {
 		t.Fatal("expected error for non-existent file")
+	}
+}
+
+func TestCLI_ApplyMultiDocPartialFailurePrintsKey(t *testing.T) {
+	mock := newMockServer()
+	srv := httptest.NewServer(mock.handler())
+	defer srv.Close()
+
+	dir := t.TempDir()
+	multiPath := filepath.Join(dir, "user_and_invalid.yaml")
+	_ = os.WriteFile(multiPath, []byte(`userId: partialuser
+---
+userId: baduser
+active: not-a-bool
+`), 0o644)
+
+	out, _, err := executeCommand([]string{"apply", "-f", multiPath, "--server", srv.URL})
+	if err == nil {
+		t.Fatal("expected apply to fail on invalid active value")
+	}
+	if !strings.Contains(out, "user/partialuser created") {
+		t.Fatalf("expected stdout to report partialuser created, got: %q", out)
+	}
+	if !strings.Contains(out, "generated-key-partialuser") {
+		t.Fatalf("expected stdout to contain generated API key, got: %q", out)
+	}
+}
+
+func TestCLI_ApplyUserAssignFailureDoesNotLeakKeyInError(t *testing.T) {
+	mock := newMockServer()
+	mock.userAssignStatus = http.StatusInternalServerError
+	srv := httptest.NewServer(mock.handler())
+	defer srv.Close()
+
+	dir := t.TempDir()
+	userFile := filepath.Join(dir, "user-assign-fail.yaml")
+	_ = os.WriteFile(userFile, []byte("userId: securerob\nroles: [admin]\n"), 0o644)
+
+	out, stderr, err := executeCommand([]string{"apply", "-f", userFile, "--server", srv.URL})
+	if err == nil {
+		t.Fatal("expected apply to fail on assign roles 500")
+	}
+	if strings.Contains(err.Error(), "generated-key-securerob") {
+		t.Fatalf("error object must not contain API key (CWE-532): %v", err)
+	}
+	if strings.Contains(stderr, "generated-key-securerob") {
+		t.Fatalf("stderr must not contain API key (CWE-532): %s", stderr)
+	}
+	if !strings.Contains(out, "user/securerob created") {
+		t.Fatalf("expected stdout to report user created, got: %q", out)
+	}
+	if !strings.Contains(out, "generated-key-securerob") {
+		t.Fatalf("expected stdout to provide generated API key, got: %q", out)
 	}
 }
 

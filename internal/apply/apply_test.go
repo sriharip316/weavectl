@@ -825,23 +825,54 @@ func TestUserApplyCreateDeactivated(t *testing.T) {
 	}
 }
 
-// REVIEW.md finding 2: the API key is shown exactly once at creation, so a
-// failure in a step running after CreateUser must carry it in the error —
-// otherwise the credential is lost with no way to authenticate the user.
+// User creation preserves the API key in partial results while keeping the error message clean (CWE-532).
 func TestUserApplyFailureKeepsAPIKey(t *testing.T) {
 	f := newFake()
 	f.userAssignStatus = http.StatusInternalServerError
-	_, err := applyDocs(t, f, "userId: bob\nroles: [dev]\n")
-	if err == nil || !strings.Contains(err.Error(), "key-bob") {
-		t.Fatalf("expected assign failure to carry the generated key, got %v", err)
+	res, err := applyDocs(t, f, "userId: bob\nroles: [dev]\n")
+	if err == nil {
+		t.Fatal("expected assign failure")
+	}
+	if strings.Contains(err.Error(), "key-bob") {
+		t.Fatalf("error message must not leak API key (CWE-532), got: %v", err)
+	}
+	if len(res) != 1 || res[0].Action != "created" || len(res[0].Info) == 0 || !strings.Contains(res[0].Info[0], "key-bob") {
+		t.Fatalf("expected partial results to carry the generated key, got res=%+v", res)
 	}
 
 	// Same for a deactivation failure right after creation.
 	f = newFake()
 	f.userTransitionStatus = http.StatusInternalServerError
-	_, err = applyDocs(t, f, "userId: bob\nactive: false\n")
-	if err == nil || !strings.Contains(err.Error(), "key-bob") {
-		t.Fatalf("expected deactivate failure to carry the generated key, got %v", err)
+	res, err = applyDocs(t, f, "userId: bob\nactive: false\n")
+	if err == nil {
+		t.Fatal("expected deactivate failure")
+	}
+	if strings.Contains(err.Error(), "key-bob") {
+		t.Fatalf("error message must not leak API key (CWE-532), got: %v", err)
+	}
+	if len(res) != 1 || res[0].Action != "created" || len(res[0].Info) == 0 || !strings.Contains(res[0].Info[0], "key-bob") {
+		t.Fatalf("expected partial results to carry the generated key, got res=%+v", res)
+	}
+}
+
+func TestApplyMultiDocPartialFailureReturnsResults(t *testing.T) {
+	f := newFake()
+	res, err := applyDocs(t, f, `userId: alice
+---
+userId: bob
+active: invalid-bool
+`)
+	if err == nil {
+		t.Fatal("expected error on invalid active field")
+	}
+	if len(res) != 1 {
+		t.Fatalf("expected 1 partial result from successful user creation, got %d", len(res))
+	}
+	if res[0].Kind != manifest.KindUser || res[0].Name != "alice" || res[0].Action != "created" {
+		t.Fatalf("unexpected partial result: %+v", res[0])
+	}
+	if len(res[0].Info) == 0 || !strings.Contains(res[0].Info[0], "key-alice") {
+		t.Fatalf("expected API key in partial result info, got %+v", res[0].Info)
 	}
 }
 

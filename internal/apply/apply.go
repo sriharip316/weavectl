@@ -53,6 +53,13 @@ func Apply(c *client.Client, docs []manifest.Document) ([]Result, error) {
 			err = fmt.Errorf("cannot apply a %q object; add a kind field to the manifest", doc.Kind)
 		}
 		if err != nil {
+			if r.Action == "created" {
+				r.Kind = doc.Kind
+				if r.Name == "" {
+					r.Name = doc.Name
+				}
+				results = append(results, r)
+			}
 			return results, fmt.Errorf("%s %q: %w", doc.Kind, doc.Name, err)
 		}
 		r.Kind = doc.Kind
@@ -503,10 +510,7 @@ func user(c *client.Client, doc manifest.Document) (Result, error) {
 		// CreateUser always yields an active user.
 		if hasActive && !desiredActive {
 			if err := weaviate.DeactivateUser(c, userID); err != nil {
-				// The user already exists and Apply drops the partial
-				// result on error; the wrapped error is the key's only
-				// way out.
-				return res, fmt.Errorf("deactivate user (API key created: %s): %w", apiKey, err)
+				return res, fmt.Errorf("deactivate user: %w", err)
 			}
 			res.Info = append(res.Info, "deactivated user")
 		}
@@ -553,7 +557,7 @@ func user(c *client.Client, doc manifest.Document) (Result, error) {
 	// A newly created user may still need its roles assigned.
 	if res.Action == "created" && len(desiredRoles) > 0 {
 		if err := weaviate.AssignRoles(c, userID, desiredRoles); err != nil {
-			return res, fmt.Errorf("assign roles (API key created: %s): %w", apiKey, err)
+			return res, fmt.Errorf("assign roles: %w", err)
 		}
 		res.Info = append(res.Info, "assigned role(s): "+strings.Join(desiredRoles, ", "))
 	}
