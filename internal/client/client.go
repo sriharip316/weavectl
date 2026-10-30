@@ -5,6 +5,7 @@ package client
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -87,6 +88,13 @@ func New(server, apiKey string) *Client {
 // body may be nil or any JSON-marshalable value. The raw response body is
 // returned for 2xx responses; anything else becomes an *APIError.
 func (c *Client) Do(method, path string, body any) (json.RawMessage, error) {
+	return c.DoContext(context.Background(), method, path, body)
+}
+
+// DoContext is Do with a context: canceling ctx aborts the in-flight
+// request. Long-poll callers (backup/restore --wait) pass the command's
+// context so Ctrl+C takes effect immediately.
+func (c *Client) DoContext(ctx context.Context, method, path string, body any) (json.RawMessage, error) {
 	var reader io.Reader
 	if body != nil {
 		buf, err := json.Marshal(body)
@@ -96,7 +104,7 @@ func (c *Client) Do(method, path string, body any) (json.RawMessage, error) {
 		reader = bytes.NewReader(buf)
 	}
 
-	req, err := http.NewRequest(method, c.baseURL+"/v1"+path, reader)
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+"/v1"+path, reader)
 	if err != nil {
 		return nil, err
 	}

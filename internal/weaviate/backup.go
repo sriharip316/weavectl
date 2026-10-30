@@ -1,6 +1,7 @@
 package weaviate
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -211,9 +212,10 @@ func ListBackups(c *client.Client, backend string) ([]BackupListEntry, error) {
 	return out, nil
 }
 
-// GetBackupStatus reports the creation status of one backup.
-func GetBackupStatus(c *client.Client, backend, id string, q StatusQuery) (*BackupStatus, error) {
-	raw, err := doGet(c, "/backups/"+url.PathEscape(backend)+"/"+url.PathEscape(id)+q.query())
+// GetBackupStatus reports the creation status of one backup. ctx may
+// cancel the request (the --wait poll loop passes the command context).
+func GetBackupStatus(ctx context.Context, c *client.Client, backend, id string, q StatusQuery) (*BackupStatus, error) {
+	raw, err := doGetContext(ctx, c, "/backups/"+url.PathEscape(backend)+"/"+url.PathEscape(id)+q.query())
 	if err != nil {
 		return nil, err
 	}
@@ -244,9 +246,10 @@ func RestoreBackup(c *client.Client, backend, id string, body map[string]any) (*
 	return &out, nil
 }
 
-// GetRestoreStatus reports the status of a restore attempt.
-func GetRestoreStatus(c *client.Client, backend, id string, q StatusQuery) (*RestoreStatus, error) {
-	raw, err := doGet(c, "/backups/"+url.PathEscape(backend)+"/"+url.PathEscape(id)+"/restore"+q.query())
+// GetRestoreStatus reports the status of a restore attempt. ctx may
+// cancel the request (the --wait poll loop passes the command context).
+func GetRestoreStatus(ctx context.Context, c *client.Client, backend, id string, q StatusQuery) (*RestoreStatus, error) {
+	raw, err := doGetContext(ctx, c, "/backups/"+url.PathEscape(backend)+"/"+url.PathEscape(id)+"/restore"+q.query())
 	if err != nil {
 		return nil, err
 	}

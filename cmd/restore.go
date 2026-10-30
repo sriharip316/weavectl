@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -56,8 +57,8 @@ or CANCELED and exits non-zero on failure.
 				return nil
 			}
 			timeout, _ := cmd.Flags().GetDuration("wait-timeout")
-			return waitTerminal(out, timeout, func() (string, string, error) {
-				st, err := weaviate.GetRestoreStatus(c, backend, id, weaviate.StatusQuery{})
+			return waitTerminal(cmd.Context(), out, timeout, func(ctx context.Context) (string, string, error) {
+				st, err := weaviate.GetRestoreStatus(ctx, c, backend, id, weaviate.StatusQuery{})
 				if err != nil {
 					return "", "", err
 				}
@@ -100,7 +101,7 @@ func newRestoreStatusCommand() *cobra.Command {
 				return err
 			}
 			backend := weaviate.NormalizeBackend(args[0])
-			st, err := weaviate.GetRestoreStatus(c, backend, args[1], statusQueryFromFlags(cmd))
+			st, err := weaviate.GetRestoreStatus(cmd.Context(), c, backend, args[1], statusQueryFromFlags(cmd))
 			if err != nil {
 				return notFoundWrap(err, "restore", backend+"/"+args[1])
 			}

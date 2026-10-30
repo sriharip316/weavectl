@@ -1,8 +1,11 @@
 package cmd
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -14,8 +17,13 @@ import (
 )
 
 // backupPollInterval separates status polls while waiting with --wait;
-// a var so tests can shorten it.
-var backupPollInterval = time.Second
+// a var so tests can shorten it. backupPollRetries caps consecutive
+// transient poll failures (network blips, brief 5xx) before the wait
+// gives up; also a var so tests can shrink it.
+var (
+	backupPollInterval = time.Second
+	backupPollRetries  = 5
+)
 
 // newCreateBackupCommand starts a backup: fire-and-forget by default,
 // polling only with --wait.
@@ -109,8 +117,8 @@ func finishBackup(cmd *cobra.Command, c *client.Client, backend, id string) erro
 		return nil
 	}
 	timeout, _ := cmd.Flags().GetDuration("wait-timeout")
-	return waitTerminal(out, timeout, func() (string, string, error) {
-		st, err := weaviate.GetBackupStatus(c, backend, id, weaviate.StatusQuery{})
+	return waitTerminal(cmd.Context(), out, timeout, func(ctx context.Context) (string, string, error) {
+		st, err := weaviate.GetBackupStatus(ctx, c, backend, id, weaviate.StatusQuery{})
 		if err != nil {
 			return "", "", err
 		}
@@ -121,38 +129,67 @@ func finishBackup(cmd *cobra.Command, c *client.Client, backend, id string) erro
 // waitTerminal polls until a terminal backup/restore phase, printing each
 // status transition. detail decorates the terminal line (backup size, or
 // the server's failure message) and is carried into the returned error.
-func waitTerminal(out io.Writer, timeout time.Duration, poll func() (status, detail string, err error)) error {
+//
+// Canceling ctx aborts the wait and the in-flight status request. Transient
+// poll failures (network blips, brief 5xx) are retried up to
+// backupPollRetries consecutive times; other server errors fail fast.
+func waitTerminal(ctx context.Context, out io.Writer, timeout time.Duration, poll func(context.Context) (status, detail string, err error)) error {
 	var last string
+	transient := 0
 	deadline := time.Now().Add(timeout)
 	for {
-		status, detail, err := poll()
+		status, detail, err := poll(ctx)
 		if err != nil {
-			return err
-		}
-		if status != last {
-			if detail != "" {
-				_, _ = fmt.Fprintf(out, "status: %s (%s)\n", status, detail)
-			} else {
-				_, _ = fmt.Fprintf(out, "status: %s\n", status)
+			if ctx.Err() != nil || errors.Is(err, context.Canceled) {
+				return fmt.Errorf("wait canceled: %w", context.Canceled)
 			}
-			last = status
-		}
-		terminal, success := weaviate.BackupPhaseDone(status)
-		if terminal {
-			if success {
-				return nil
+			if !transientPollError(err) || transient >= backupPollRetries {
+				return err
 			}
-			msg := strings.ToLower(status)
-			if detail != "" {
-				msg += ": " + detail
+			transient++
+			_, _ = fmt.Fprintf(out, "status poll failed (%d/%d), retrying: %v\n", transient, backupPollRetries, err)
+		} else {
+			transient = 0
+			if status != last {
+				if detail != "" {
+					_, _ = fmt.Fprintf(out, "status: %s (%s)\n", status, detail)
+				} else {
+					_, _ = fmt.Fprintf(out, "status: %s\n", status)
+				}
+				last = status
 			}
-			return fmt.Errorf("%s", msg)
+			terminal, success := weaviate.BackupPhaseDone(status)
+			if terminal {
+				if success {
+					return nil
+				}
+				msg := strings.ToLower(status)
+				if detail != "" {
+					msg += ": " + detail
+				}
+				return fmt.Errorf("%s", msg)
+			}
 		}
 		if !time.Now().Before(deadline) {
-			return fmt.Errorf("timed out after %s waiting (last status: %s)", timeout, status)
+			return fmt.Errorf("timed out after %s waiting (last status: %s)", timeout, last)
 		}
-		time.Sleep(backupPollInterval)
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("wait canceled: %w", ctx.Err())
+		case <-time.After(backupPollInterval):
+		}
 	}
+}
+
+// transientPollError reports whether a poll failure is worth retrying:
+// transport-level errors (connection refused/reset, timeouts, EOF) and
+// server-side hiccups (5xx, 429). Definitive server answers (404, 401,
+// 403, 422, ...) fail fast.
+func transientPollError(err error) bool {
+	if apiErr, ok := errors.AsType[*client.APIError](err); ok {
+		return apiErr.StatusCode >= 500 || apiErr.StatusCode == http.StatusTooManyRequests
+	}
+	return true
 }
 
 // backupDetail summarizes a terminal backup status.

@@ -1,8 +1,11 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +14,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/sriharip316/weavectl/internal/client"
 )
 
 // backupMock is a stateful fake of the backup API. Each backup and
@@ -25,6 +30,9 @@ type backupMock struct {
 	// ends FAILED with createErrMsg.
 	failNew      bool
 	createErrMsg string
+	// failStatusGets makes the next N creation-status GETs answer 503,
+	// simulating a brief server hiccup in the middle of a --wait poll.
+	failStatusGets int
 }
 
 type mockBackup struct {
@@ -132,6 +140,11 @@ func (m *backupMock) handler() http.Handler {
 	mux.HandleFunc("GET /v1/backups/{backend}/{id}", func(w http.ResponseWriter, r *http.Request) {
 		m.mu.Lock()
 		defer m.mu.Unlock()
+		if m.failStatusGets > 0 {
+			m.failStatusGets--
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
 		b, ok := m.backups[r.PathValue("backend")+"/"+r.PathValue("id")]
 		if !ok {
 			w.WriteHeader(http.StatusNotFound)
@@ -532,5 +545,136 @@ func TestCLI_CreateBackupFromFile(t *testing.T) {
 	_, _, err := executeCommand([]string{"create", "-f", file, "--server", srv.URL})
 	if err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Errorf("expected AlreadyExists error, got %v", err)
+	}
+}
+
+// ---- waitTerminal: cancellation and transient-error resilience ----
+
+func TestWaitTerminalCancelDuringSleep(t *testing.T) {
+	origInterval, origRetries := backupPollInterval, backupPollRetries
+	backupPollInterval = 10 * time.Second
+	defer func() { backupPollInterval, backupPollRetries = origInterval, origRetries }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	polls := 0
+	start := time.Now()
+	err := waitTerminal(ctx, io.Discard, time.Minute, func(context.Context) (string, string, error) {
+		polls++
+		cancel() // the user hits Ctrl+C while waitTerminal is between polls
+		return "TRANSFERRING", "", nil
+	})
+	if time.Since(start) > 5*time.Second {
+		t.Fatalf("cancel during the poll sleep took %s to notice", time.Since(start))
+	}
+	if err == nil || !strings.Contains(err.Error(), "canceled") {
+		t.Fatalf("want canceled error, got %v", err)
+	}
+	if polls != 1 {
+		t.Errorf("polls = %d, want 1", polls)
+	}
+}
+
+func TestWaitTerminalRetriesTransientErrors(t *testing.T) {
+	origInterval := backupPollInterval
+	backupPollInterval = time.Millisecond
+	defer func() { backupPollInterval = origInterval }()
+
+	polls := 0
+	err := waitTerminal(context.Background(), io.Discard, 10*time.Second, func(context.Context) (string, string, error) {
+		polls++
+		if polls <= 2 {
+			return "", "", errors.New("dial tcp 127.0.0.1:8080: connect: connection refused")
+		}
+		return "SUCCESS", "", nil
+	})
+	if err != nil {
+		t.Fatalf("transient poll errors should be retried, got %v", err)
+	}
+	if polls != 3 {
+		t.Errorf("polls = %d, want 3", polls)
+	}
+}
+
+func TestWaitTerminalFailsFastOnAPIError(t *testing.T) {
+	origInterval := backupPollInterval
+	backupPollInterval = time.Millisecond
+	defer func() { backupPollInterval = origInterval }()
+
+	polls := 0
+	err := waitTerminal(context.Background(), io.Discard, 10*time.Second, func(context.Context) (string, string, error) {
+		polls++
+		return "", "", &client.APIError{StatusCode: http.StatusNotFound, Op: "GET /v1/backups/filesystem/snap-1"}
+	})
+	if err == nil {
+		t.Fatal("definitive API errors must fail fast, got nil")
+	}
+	if polls != 1 {
+		t.Errorf("polls = %d, want 1 (no retries for a definitive 404)", polls)
+	}
+}
+
+func TestWaitTerminalTransientThresholdExhausted(t *testing.T) {
+	origInterval, origRetries := backupPollInterval, backupPollRetries
+	backupPollInterval, backupPollRetries = time.Millisecond, 2
+	defer func() { backupPollInterval, backupPollRetries = origInterval, origRetries }()
+
+	polls := 0
+	err := waitTerminal(context.Background(), io.Discard, 10*time.Second, func(context.Context) (string, string, error) {
+		polls++
+		return "", "", errors.New("read tcp: connection reset by peer")
+	})
+	if err == nil {
+		t.Fatal("expected the last transient error after exhausting retries")
+	}
+	if polls != 3 { // 1 initial + backupPollRetries retries
+		t.Errorf("polls = %d, want 3", polls)
+	}
+}
+
+func TestTransientPollError(t *testing.T) {
+	cases := []struct {
+		err       error
+		transient bool
+	}{
+		{&client.APIError{StatusCode: 500}, true},
+		{&client.APIError{StatusCode: http.StatusServiceUnavailable}, true},
+		{&client.APIError{StatusCode: http.StatusTooManyRequests}, true},
+		{&client.APIError{StatusCode: http.StatusNotFound}, false},
+		{&client.APIError{StatusCode: http.StatusUnauthorized}, false},
+		{&client.APIError{StatusCode: http.StatusUnprocessableEntity}, false},
+		{errors.New("dial tcp: connection refused"), true},
+		{io.ErrUnexpectedEOF, true},
+	}
+	for _, tc := range cases {
+		if got := transientPollError(tc.err); got != tc.transient {
+			t.Errorf("transientPollError(%v) = %v, want %v", tc.err, got, tc.transient)
+		}
+	}
+}
+
+func TestCLI_BackupWaitRecoversFromTransientErrors(t *testing.T) {
+	origInterval := backupPollInterval
+	backupPollInterval = time.Millisecond
+	defer func() { backupPollInterval = origInterval }()
+
+	mock := newBackupMock()
+	srv := httptest.NewServer(mock.handler())
+	defer srv.Close()
+
+	// The server hiccups twice mid-wait; the wait must ride it out.
+	mock.failStatusGets = 2
+	out, _, err := executeCommand([]string{
+		"create", "backup", "filesystem", "snap-blink", "--include", "Articles",
+		"--wait", "--server", srv.URL,
+	})
+	if err != nil {
+		t.Fatalf("wait should survive transient status failures, got %v", err)
+	}
+	if !strings.Contains(out, "status poll failed (1/5)") {
+		t.Errorf("retry progress missing from output:\n%s", out)
+	}
+	if !strings.Contains(out, "status: SUCCESS") {
+		t.Errorf("wait did not reach SUCCESS:\n%s", out)
 	}
 }

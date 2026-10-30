@@ -2,10 +2,13 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -118,8 +121,23 @@ func resolveType(arg string) (string, error) {
 	return "", fmt.Errorf("unknown resource type %q (want one of: collections, roles, users, aliases, tenants, shards, nodes, backups)", arg)
 }
 
+// Execute runs the root command with a signal-aware context: the first
+// SIGINT/SIGTERM cancels the context (so context-aware work like
+// `backup --wait` stops gracefully), the second one exits hard in case a
+// command ignores cancellation.
 func Execute() {
-	if err := NewRootCommand().Execute(); err != nil {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+	go func() {
+		<-sigCh // first signal: cancel gracefully
+		cancel()
+		<-sigCh // second signal: the user wants out now
+		os.Exit(130)
+	}()
+	if err := NewRootCommand().ExecuteContext(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, friendlyMessage(err))
 		os.Exit(1)
 	}

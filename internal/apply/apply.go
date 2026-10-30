@@ -7,6 +7,7 @@ package apply
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -712,7 +713,7 @@ func backup(c *client.Client, doc manifest.Document) (Result, error) {
 	id := doc.BackupID()
 	res := Result{Name: backend + "/" + id}
 
-	current, err := weaviate.GetBackupStatus(c, backend, id, weaviate.StatusQuery{})
+	current, err := weaviate.GetBackupStatus(context.Background(), c, backend, id, weaviate.StatusQuery{})
 	if err == nil {
 		terminal, success := weaviate.BackupPhaseDone(current.Status)
 		switch {
@@ -756,7 +757,7 @@ func restore(c *client.Client, doc manifest.Document) (Result, error) {
 	}
 	res := Result{Name: backend + "/" + id}
 
-	current, err := weaviate.GetRestoreStatus(c, backend, id, weaviate.StatusQuery{})
+	current, err := weaviate.GetRestoreStatus(context.Background(), c, backend, id, weaviate.StatusQuery{})
 	if err == nil {
 		terminal, success := weaviate.BackupPhaseDone(current.Status)
 		switch {

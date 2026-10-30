@@ -1,12 +1,14 @@
 package client
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDoBearerAuthAndPath(t *testing.T) {
@@ -114,4 +116,36 @@ func TestIsNotFoundAndConflictUnwrap(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDoContextCancelsInFlightRequest(t *testing.T) {
+	// A server that holds the response until its request context dies:
+	// canceling the caller's ctx must abort the in-flight request instead
+	// of waiting for the client's 30s timeout.
+	released := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+		close(released)
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "")
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.DoContext(ctx, http.MethodGet, "/meta", nil)
+		done <- err
+	}()
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		if err == nil || !errors.Is(err, context.Canceled) {
+			t.Fatalf("want context.Canceled, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("DoContext did not return after ctx cancel")
+	}
+	<-released // the server handler observes the same cancellation
 }

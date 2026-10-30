@@ -4,6 +4,7 @@
 package weaviate
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -21,7 +22,12 @@ import (
 // modeling every field.
 
 func doGet(c *client.Client, path string) (json.RawMessage, error) {
-	return c.Do(http.MethodGet, path, nil)
+	return doGetContext(context.Background(), c, path)
+}
+
+// doGetContext is doGet with a context; canceling ctx aborts the request.
+func doGetContext(ctx context.Context, c *client.Client, path string) (json.RawMessage, error) {
+	return c.DoContext(ctx, http.MethodGet, path, nil)
 }
 
 // ---- Collections (schema) ----

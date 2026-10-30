@@ -1,6 +1,7 @@
 package weaviate
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -79,7 +80,7 @@ func TestListAndGetBackupStatus(t *testing.T) {
 		t.Fatalf("list = %+v", list)
 	}
 
-	st, err := GetBackupStatus(c, "filesystem", "snap-1", StatusQuery{Bucket: "b", Path: "p"})
+	st, err := GetBackupStatus(context.Background(), c, "filesystem", "snap-1", StatusQuery{Bucket: "b", Path: "p"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +91,7 @@ func TestListAndGetBackupStatus(t *testing.T) {
 		t.Errorf("query = %q, want %q", gotQuery, want)
 	}
 
-	_, err = GetBackupStatus(c, "filesystem", "missing", StatusQuery{})
+	_, err = GetBackupStatus(context.Background(), c, "filesystem", "missing", StatusQuery{})
 	if !client.IsNotFound(err) {
 		t.Errorf("expected NotFound, got %v", err)
 	}
@@ -155,7 +156,7 @@ func TestRestoreEndpoints(t *testing.T) {
 		t.Errorf("node_mapping = %v", gotBody["node_mapping"])
 	}
 
-	st, err := GetRestoreStatus(c, "filesystem", "snap-1", StatusQuery{})
+	st, err := GetRestoreStatus(context.Background(), c, "filesystem", "snap-1", StatusQuery{})
 	if err != nil {
 		t.Fatal(err)
 	}

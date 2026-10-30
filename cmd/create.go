@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -182,10 +183,10 @@ func objectExists(c *client.Client, doc manifest.Document, declaredCollections m
 		}
 		return false, nil
 	case manifest.KindBackup:
-		_, err := weaviate.GetBackupStatus(c, doc.Backend(), doc.BackupID(), weaviate.StatusQuery{})
+		_, err := weaviate.GetBackupStatus(context.Background(), c, doc.Backend(), doc.BackupID(), weaviate.StatusQuery{})
 		return !client.IsNotFound(err), errUnlessNotFound(err)
 	case manifest.KindRestore:
-		_, err := weaviate.GetRestoreStatus(c, doc.Backend(), doc.BackupID(), weaviate.StatusQuery{})
+		_, err := weaviate.GetRestoreStatus(context.Background(), c, doc.Backend(), doc.BackupID(), weaviate.StatusQuery{})
 		return !client.IsNotFound(err), errUnlessNotFound(err)
 	}
 	return false, fmt.Errorf("unsupported kind %q", doc.Kind)

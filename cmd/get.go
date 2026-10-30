@@ -225,7 +225,7 @@ func runGet(cmd *cobra.Command, c *client.Client, typ, name string, format print
 		}
 		backend = weaviate.NormalizeBackend(backend)
 		if single {
-			st, err := weaviate.GetBackupStatus(c, backend, name, weaviate.StatusQuery{})
+			st, err := weaviate.GetBackupStatus(cmd.Context(), c, backend, name, weaviate.StatusQuery{})
 			if err != nil {
 				return notFoundWrap(err, "backup", backend+"/"+name)
 			}
