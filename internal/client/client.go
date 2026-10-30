@@ -6,6 +6,7 @@ package client
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -50,15 +51,17 @@ func (e *APIError) Reason() string {
 	}
 }
 
-// IsNotFound reports whether err is a 404 from the server.
+// IsNotFound reports whether err is a 404 from the server, including
+// when it has been wrapped with %w along the way.
 func IsNotFound(err error) bool {
-	apiErr, ok := err.(*APIError)
+	apiErr, ok := errors.AsType[*APIError](err)
 	return ok && apiErr.StatusCode == http.StatusNotFound
 }
 
-// IsConflict reports whether err is a 409 from the server.
+// IsConflict reports whether err is a 409 from the server, including
+// when it has been wrapped with %w along the way.
 func IsConflict(err error) bool {
-	apiErr, ok := err.(*APIError)
+	apiErr, ok := errors.AsType[*APIError](err)
 	return ok && apiErr.StatusCode == http.StatusConflict
 }
 

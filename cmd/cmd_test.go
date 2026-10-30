@@ -959,7 +959,7 @@ func TestCLI_ConfigFlags(t *testing.T) {
 
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.yaml")
-	_ = os.WriteFile(configPath, []byte(fmt.Sprintf(`
+	_ = os.WriteFile(configPath, fmt.Appendf(nil, `
 current-context: dev
 contexts:
   dev:
@@ -967,7 +967,7 @@ contexts:
     api-key: my-key
   prod:
     server: http://prod.example.com
-`, srv.URL)), 0o644)
+`, srv.URL), 0o644)
 
 	// Context from config file
 	out, _, err := executeCommand([]string{"version", "--config", configPath})

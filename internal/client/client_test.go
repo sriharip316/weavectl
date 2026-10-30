@@ -1,6 +1,8 @@
 package client
 
 import (
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -75,6 +77,40 @@ func TestErrorShapes(t *testing.T) {
 			}
 			if tt.wantReason == "NotFound" != IsNotFound(err) {
 				t.Errorf("IsNotFound disagrees for %d", apiErr.StatusCode)
+			}
+		})
+	}
+}
+
+// Status checks must see through %w wrapping; a bare type assertion
+// breaks as soon as a caller decorates the error.
+func TestIsNotFoundAndConflictUnwrap(t *testing.T) {
+	notFound := &APIError{StatusCode: http.StatusNotFound}
+	conflict := &APIError{StatusCode: http.StatusConflict}
+	forbidden := &APIError{StatusCode: http.StatusForbidden}
+	plain := errors.New("nope")
+
+	for _, tt := range []struct {
+		name         string
+		err          error
+		wantNotFound bool
+		wantConflict bool
+	}{
+		{"bare 404", notFound, true, false},
+		{"bare 409", conflict, false, true},
+		{"wrapped 404", fmt.Errorf("lookup failed: %w", notFound), true, false},
+		{"wrapped 409", fmt.Errorf("activate failed: %w", conflict), false, true},
+		{"wrapped other status", fmt.Errorf("nope: %w", forbidden), false, false},
+		{"wrapped non-API error", fmt.Errorf("nope: %w", plain), false, false},
+		{"plain error", plain, false, false},
+		{"nil", nil, false, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsNotFound(tt.err); got != tt.wantNotFound {
+				t.Errorf("IsNotFound() = %v, want %v", got, tt.wantNotFound)
+			}
+			if got := IsConflict(tt.err); got != tt.wantConflict {
+				t.Errorf("IsConflict() = %v, want %v", got, tt.wantConflict)
 			}
 		})
 	}

@@ -80,7 +80,13 @@ func Load(opts Options) (*Config, error) {
 	}
 
 	f, err := loadFile(path)
-	if err != nil {
+	switch {
+	case err == nil:
+	case opts.ConfigPath == "" && errors.Is(err, os.ErrNotExist):
+		// A missing default config file is fine; an explicitly
+		// requested --config path that does not exist is an error.
+		f = nil
+	default:
 		return nil, err
 	}
 
@@ -124,9 +130,6 @@ func applyOverrides(cfg *Config, opts Options) {
 func loadFile(path string) (*File, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil // no config file is fine
-		}
 		return nil, fmt.Errorf("read config %s: %w", path, err)
 	}
 	var f File

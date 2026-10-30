@@ -1,8 +1,10 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -118,11 +120,30 @@ contexts:
 	}
 }
 
-func TestLoadMissingFileIsFine(t *testing.T) {
+// An explicit --config path that does not exist must be an error, not a
+// silent fall back to the default server.
+func TestLoadMissingExplicitConfigFileErrors(t *testing.T) {
 	isolateEnv(t)
-	cfg, err := Load(Options{ConfigPath: filepath.Join(t.TempDir(), "absent.yaml")})
+	path := filepath.Join(t.TempDir(), "absent.yaml")
+	_, err := Load(Options{ConfigPath: path})
+	if err == nil {
+		t.Fatal("expected error for explicitly missing config file")
+	}
+	if !strings.Contains(err.Error(), "absent.yaml") {
+		t.Fatalf("error should name the missing path: %v", err)
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("error should wrap os.ErrNotExist: %v", err)
+	}
+}
+
+// Without an explicit --config, a missing default config file is normal.
+func TestLoadMissingDefaultConfigFileIsFine(t *testing.T) {
+	isolateEnv(t)
+	t.Setenv("HOME", t.TempDir()) // DefaultPath() finds no config here
+	cfg, err := Load(Options{})
 	if err != nil {
-		t.Fatalf("missing config file must not error: %v", err)
+		t.Fatalf("missing default config file must not error: %v", err)
 	}
 	if cfg.Server != DefaultServer {
 		t.Fatalf("got %+v", cfg)
