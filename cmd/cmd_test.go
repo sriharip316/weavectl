@@ -722,6 +722,78 @@ func TestCLI_Create(t *testing.T) {
 	}
 }
 
+// REVIEW.md finding 6: multi-document manifests creating a collection and its
+// tenants in a single batch must succeed in pre-flight checks, and intra-batch
+// duplicate resources must be rejected with AlreadyExists.
+func TestCLI_CreateMultiDoc(t *testing.T) {
+	mock := newMockServer()
+	srv := httptest.NewServer(mock.handler())
+	defer srv.Close()
+
+	dir := t.TempDir()
+
+	// 1. Multi-doc manifest: Collection + Tenants
+	multiPath := filepath.Join(dir, "col_and_tenants.yaml")
+	_ = os.WriteFile(multiPath, []byte(`class: BatchMT
+vectorizer: none
+multiTenancyConfig:
+  enabled: true
+---
+collection: BatchMT
+tenants:
+  - name: tenant-alpha
+  - name: tenant-beta
+`), 0o644)
+
+	out, _, err := executeCommand([]string{"create", "-f", multiPath, "--server", srv.URL})
+	if err != nil {
+		t.Fatalf("create -f multi collection + tenants: %v", err)
+	}
+	if !strings.Contains(out, "collection/BatchMT created") || !strings.Contains(out, "tenants/BatchMT") {
+		t.Fatalf("unexpected out: %q", out)
+	}
+
+	// 2. Re-running create on the same manifest fails with AlreadyExists
+	_, _, err = executeCommand([]string{"create", "-f", multiPath, "--server", srv.URL})
+	if err == nil {
+		t.Fatal("expected duplicate create -f to fail")
+	}
+
+	// 3. Intra-batch duplicate collection rejected
+	dupColPath := filepath.Join(dir, "dup_col.yaml")
+	_ = os.WriteFile(dupColPath, []byte(`class: DupCol
+---
+class: DupCol
+`), 0o644)
+	_, _, err = executeCommand([]string{"create", "-f", dupColPath, "--server", srv.URL})
+	if err == nil {
+		t.Fatal("expected intra-batch duplicate collection to fail")
+	}
+
+	// 4. Intra-batch duplicate tenants rejected
+	dupTenantPath := filepath.Join(dir, "dup_tenant.yaml")
+	_ = os.WriteFile(dupTenantPath, []byte(`collection: MTNews
+tenants:
+  - name: t-dup
+  - name: t-dup
+`), 0o644)
+	_, _, err = executeCommand([]string{"create", "-f", dupTenantPath, "--server", srv.URL})
+	if err == nil {
+		t.Fatal("expected intra-batch duplicate tenants to fail")
+	}
+
+	// 5. Tenants targeting non-existent collection (not in batch and not on server) fails
+	nonExistentTenantPath := filepath.Join(dir, "nonexistent_col_tenants.yaml")
+	_ = os.WriteFile(nonExistentTenantPath, []byte(`collection: TrulyNonExistent
+tenants:
+  - name: t-missing
+`), 0o644)
+	_, _, err = executeCommand([]string{"create", "-f", nonExistentTenantPath, "--server", srv.URL})
+	if err == nil {
+		t.Fatal("expected error for tenants on non-existent collection")
+	}
+}
+
 func TestCLI_Apply(t *testing.T) {
 	mock := newMockServer()
 	srv := httptest.NewServer(mock.handler())

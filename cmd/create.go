@@ -58,12 +58,47 @@ already exists.`,
 }
 
 func createFromDocs(cmd *cobra.Command, c *client.Client, docs []manifest.Document) error {
+	declaredCollections := make(map[string]bool)
+	seen := make(map[string]bool)
+	seenTenants := make(map[string]bool)
+
 	for _, doc := range docs {
 		if doc.Kind == manifest.KindUnknown {
 			return fmt.Errorf("cannot determine object kind for the manifest; add a \"kind\" field")
 		}
-		if err := ensureAbsent(c, doc); err != nil {
+
+		if doc.Kind == manifest.KindTenants {
+			td, err := doc.TenantsDoc()
+			if err != nil {
+				return err
+			}
+			col := weaviate.CapitalizeName(td.Collection)
+			for _, want := range td.Tenants {
+				name, _ := want["name"].(string)
+				if name != "" {
+					tKey := col + "/" + name
+					if seenTenants[tKey] {
+						return newServerError("AlreadyExists", "%s %q already exists", doc.Kind, doc.Name)
+					}
+					seenTenants[tKey] = true
+				}
+			}
+		} else {
+			key := docIdentity(doc)
+			if key != "" {
+				if seen[key] {
+					return newServerError("AlreadyExists", "%s %q already exists", doc.Kind, doc.Name)
+				}
+				seen[key] = true
+			}
+		}
+
+		if err := ensureAbsent(c, doc, declaredCollections); err != nil {
 			return err
+		}
+
+		if doc.Kind == manifest.KindCollection || doc.Kind == manifest.KindAlias {
+			declaredCollections[weaviate.CapitalizeName(doc.Name)] = true
 		}
 	}
 	results, err := apply.Apply(c, docs)
@@ -74,9 +109,28 @@ func createFromDocs(cmd *cobra.Command, c *client.Client, docs []manifest.Docume
 	return nil
 }
 
+func docIdentity(doc manifest.Document) string {
+	switch doc.Kind {
+	case manifest.KindCollection:
+		return fmt.Sprintf("collection/%s", weaviate.CapitalizeName(doc.Name))
+	case manifest.KindRole:
+		return fmt.Sprintf("role/%s", doc.Name)
+	case manifest.KindUser:
+		return fmt.Sprintf("user/%s", doc.Name)
+	case manifest.KindAlias:
+		return fmt.Sprintf("alias/%s", weaviate.CapitalizeName(doc.Name))
+	case manifest.KindBackup:
+		return fmt.Sprintf("backup/%s/%s", doc.Backend(), doc.BackupID())
+	case manifest.KindRestore:
+		return fmt.Sprintf("restore/%s/%s", doc.Backend(), doc.BackupID())
+	default:
+		return ""
+	}
+}
+
 // ensureAbsent turns apply's upsert into create's insert-only semantics.
-func ensureAbsent(c *client.Client, doc manifest.Document) error {
-	exists, err := objectExists(c, doc)
+func ensureAbsent(c *client.Client, doc manifest.Document, declaredCollections map[string]bool) error {
+	exists, err := objectExists(c, doc, declaredCollections)
 	if err != nil {
 		return err
 	}
@@ -86,7 +140,7 @@ func ensureAbsent(c *client.Client, doc manifest.Document) error {
 	return nil
 }
 
-func objectExists(c *client.Client, doc manifest.Document) (bool, error) {
+func objectExists(c *client.Client, doc manifest.Document, declaredCollections map[string]bool) (bool, error) {
 	switch doc.Kind {
 	case manifest.KindCollection:
 		_, err := weaviate.ResolveCollection(c, doc.Name)
@@ -104,6 +158,10 @@ func objectExists(c *client.Client, doc manifest.Document) (bool, error) {
 		td, err := doc.TenantsDoc()
 		if err != nil {
 			return false, err
+		}
+		colName := weaviate.CapitalizeName(td.Collection)
+		if declaredCollections != nil && declaredCollections[colName] {
+			return false, nil
 		}
 		collection, err := weaviate.ResolveCollection(c, td.Collection)
 		if err != nil {
