@@ -43,6 +43,23 @@ type TenantsDoc struct {
 	Tenants    []map[string]any
 }
 
+// MaxManifestBytes caps how much of a manifest the loader will buffer,
+// so piping an endless (or accidentally huge) stream into stdin cannot
+// exhaust process memory.
+var MaxManifestBytes int64 = 32 << 20 // 32 MiB
+
+// readAllLimited buffers r up to MaxManifestBytes and errors beyond it.
+func readAllLimited(r io.Reader, what string) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(r, MaxManifestBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > MaxManifestBytes {
+		return nil, fmt.Errorf("%s exceeds the %d byte limit", what, MaxManifestBytes)
+	}
+	return data, nil
+}
+
 // Load reads a manifest file ("-" for stdin) and returns its documents.
 // JSON files hold a single object; YAML files may hold multiple documents
 // separated by ---.
@@ -50,9 +67,15 @@ func Load(path string) ([]Document, error) {
 	var data []byte
 	var err error
 	if path == "-" {
-		data, err = io.ReadAll(os.Stdin)
+		data, err = readAllLimited(os.Stdin, "manifest from stdin")
 	} else {
-		data, err = os.ReadFile(path)
+		var f *os.File
+		f, err = os.Open(path)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = f.Close() }()
+		data, err = readAllLimited(f, fmt.Sprintf("manifest %s", path))
 	}
 	if err != nil {
 		return nil, err

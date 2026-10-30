@@ -1,6 +1,10 @@
 package manifest
 
 import (
+	"bytes"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -115,5 +119,64 @@ func TestTenantsDoc(t *testing.T) {
 	}
 	if td.Collection != "MT" || len(td.Tenants) != 1 || td.Tenants[0]["name"] != "t1" {
 		t.Fatalf("bad tenants doc: %+v", td)
+	}
+}
+
+func TestLoadStdinRejectsOversizedManifest(t *testing.T) {
+	orig := MaxManifestBytes
+	MaxManifestBytes = 1024
+	defer func() { MaxManifestBytes = orig }()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		_, _ = w.Write(bytes.Repeat([]byte("x"), 1025)) // one byte over the cap
+		_ = w.Close()
+	}()
+
+	oldStdin := os.Stdin
+	os.Stdin = r
+	defer func() { os.Stdin = oldStdin }()
+
+	_, err = Load("-")
+	if err == nil || !strings.Contains(err.Error(), "stdin") || !strings.Contains(err.Error(), "1024 byte limit") {
+		t.Fatalf("want size-limit error for stdin, got %v", err)
+	}
+}
+
+func TestLoadFileRejectsOversizedManifest(t *testing.T) {
+	orig := MaxManifestBytes
+	MaxManifestBytes = 1024
+	defer func() { MaxManifestBytes = orig }()
+
+	path := filepath.Join(t.TempDir(), "big.yaml")
+	if err := os.WriteFile(path, bytes.Repeat([]byte("x"), 1025), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), "1024 byte limit") {
+		t.Fatalf("want size-limit error naming the file, got %v", err)
+	}
+}
+
+func TestLoadFileUnderLimitStillParses(t *testing.T) {
+	orig := MaxManifestBytes
+	MaxManifestBytes = 1024
+	defer func() { MaxManifestBytes = orig }()
+
+	path := filepath.Join(t.TempDir(), "ok.json")
+	if err := os.WriteFile(path, []byte(`{"class":"Articles"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	docs, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(docs) != 1 || docs[0].Kind != KindCollection {
+		t.Fatalf("unexpected docs: %+v", docs)
 	}
 }

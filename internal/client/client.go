@@ -66,6 +66,11 @@ func IsConflict(err error) bool {
 	return ok && apiErr.StatusCode == http.StatusConflict
 }
 
+// MaxResponseBytes caps how much of a single response body the client
+// will buffer, so a runaway server (or a hostile one) cannot exhaust
+// process memory. Responses are API metadata and stay far below this.
+var MaxResponseBytes int64 = 32 << 20 // 32 MiB
+
 // Client talks to a single Weaviate instance.
 type Client struct {
 	Server  string // base URL, e.g. http://localhost:8080
@@ -122,9 +127,12 @@ func (c *Client) DoContext(ctx context.Context, method, path string, body any) (
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	raw, err := io.ReadAll(resp.Body)
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, MaxResponseBytes+1))
 	if err != nil {
 		return nil, err
+	}
+	if int64(len(raw)) > MaxResponseBytes {
+		return nil, fmt.Errorf("%s %s: response exceeds the %d byte limit", method, path, MaxResponseBytes)
 	}
 
 	if resp.StatusCode >= 300 {

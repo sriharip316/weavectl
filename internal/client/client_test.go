@@ -149,3 +149,40 @@ func TestDoContextCancelsInFlightRequest(t *testing.T) {
 	}
 	<-released // the server handler observes the same cancellation
 }
+
+func TestDoRejectsOversizedResponse(t *testing.T) {
+	orig := MaxResponseBytes
+	MaxResponseBytes = 1024
+	defer func() { MaxResponseBytes = orig }()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(make([]byte, 1025)) // one byte over the cap
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "")
+	_, err := c.Do(http.MethodGet, "/meta", nil)
+	if err == nil || !strings.Contains(err.Error(), "1024 byte limit") {
+		t.Fatalf("want size-limit error, got %v", err)
+	}
+}
+
+func TestDoAcceptsResponseAtLimit(t *testing.T) {
+	orig := MaxResponseBytes
+	MaxResponseBytes = 1024
+	defer func() { MaxResponseBytes = orig }()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(make([]byte, 1024)) // exactly at the cap is fine
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "")
+	raw, err := c.Do(http.MethodGet, "/meta", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(raw) != 1024 {
+		t.Fatalf("len(raw) = %d, want 1024", len(raw))
+	}
+}
