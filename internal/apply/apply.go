@@ -409,9 +409,8 @@ func v_orNil(p map[string]any, key string) (map[string]any, bool) {
 }
 
 // coveredBy reports whether perm is already granted by some permission in
-// set: same action and every leaf of perm matches the candidate's
-// (default-stripped) leaves. Extra leaves on the candidate are allowed for
-// the satisfaction direction only when they are server defaults.
+// set: same action and the candidate's effective (default-stripped) form
+// matches perm leaf-for-leaf.
 func coveredBy(perm map[string]any, set []map[string]any) bool {
 	action, _ := perm["action"].(string)
 	for _, cand := range set {
@@ -419,17 +418,23 @@ func coveredBy(perm map[string]any, set []map[string]any) bool {
 			continue
 		}
 		eff := effectivePerm(cand)
-		if permSubset(perm, eff) {
+		if permEqual(perm, eff) {
 			return true
 		}
 	}
 	return false
 }
 
-// permSubset: every leaf of a exists with the same value in b, ignoring
-// leaves absent from a. Resource objects compare leafwise; a missing
-// resource object on either side only matches if the other has none either.
-func permSubset(a, b map[string]any) bool {
+// permEqual: a and b carry the same top-level keys and, for resource
+// objects, the same leaves with equal values. Both sides are expected in
+// effective space (server-filled defaults already stripped), so anything
+// extra on either side — a resource object or a leaf — is a real scope
+// difference, not a default: an unrestricted permission never matches a
+// restricted one in either direction.
+func permEqual(a, b map[string]any) bool {
+	if len(a) != len(b) {
+		return false
+	}
 	for k, av := range a {
 		bv, ok := b[k]
 		if !ok {
@@ -441,10 +446,9 @@ func permSubset(a, b map[string]any) bool {
 			return false
 		}
 		if aIsMap {
-			// every leaf in a's resource must be present-and-equal in b's;
-			// extra leaves in b mean b grants more, which still satisfies a
-			// only when they are server defaults — the caller passes b
-			// already default-stripped when b comes from the server.
+			if len(am) != len(bm) {
+				return false
+			}
 			for lk, lv := range am {
 				if !leafEqual(bm[lk], lv) {
 					return false

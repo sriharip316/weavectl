@@ -146,6 +146,7 @@ func (f *fakeWeaviate) handler() http.Handler {
 			Permissions []map[string]any `json:"permissions"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
+		f.roles[name] = removePerms(f.roles[name], body.Permissions)
 		f.record("POST remove-permissions %s x%d", name, len(body.Permissions))
 		w.WriteHeader(http.StatusOK)
 	})
@@ -435,6 +436,26 @@ func fillDefaults(perms []map[string]any) []map[string]any {
 	return out
 }
 
+// removePerms drops the stored permissions matched (in effective space) by
+// a remove request, mirroring the server's delete semantics.
+func removePerms(stored, remove []map[string]any) []map[string]any {
+	out := make([]map[string]any, 0, len(stored))
+	for _, sp := range stored {
+		eff := effectivePerm(normalizePerm(sp))
+		matched := false
+		for _, rp := range remove {
+			if permEqual(eff, effectivePerm(normalizePerm(rp))) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			out = append(out, sp)
+		}
+	}
+	return out
+}
+
 func doc(t *testing.T, yaml string) []manifest.Document {
 	t.Helper()
 	docs, err := manifest.Parse([]byte(yaml), false)
@@ -506,6 +527,115 @@ func TestRoleApplyDiff(t *testing.T) {
 	}
 	if strings.Index(joined, "add-permissions") > strings.Index(joined, "remove-permissions") {
 		t.Errorf("adds must happen before removes: %v", f.calls)
+	}
+}
+
+func TestPermEqual(t *testing.T) {
+	cases := []struct {
+		name string
+		a, b map[string]any
+		want bool
+	}{
+		{
+			name: "identical unrestricted",
+			a:    map[string]any{"action": "create_collections"},
+			b:    map[string]any{"action": "create_collections"},
+			want: true,
+		},
+		{
+			name: "unrestricted vs scoped",
+			a:    map[string]any{"action": "create_collections"},
+			b:    map[string]any{"action": "create_collections", "collections": map[string]any{"collection": "A"}},
+			want: false,
+		},
+		{
+			name: "scoped vs unrestricted",
+			a:    map[string]any{"action": "create_collections", "collections": map[string]any{"collection": "A"}},
+			b:    map[string]any{"action": "create_collections"},
+			want: false,
+		},
+		{
+			name: "extra leaf on b",
+			a:    map[string]any{"action": "read_data", "data": map[string]any{"collection": "A"}},
+			b:    map[string]any{"action": "read_data", "data": map[string]any{"collection": "A", "object": "x"}},
+			want: false,
+		},
+		{
+			name: "extra leaf on a",
+			a:    map[string]any{"action": "read_data", "data": map[string]any{"collection": "A", "object": "x"}},
+			b:    map[string]any{"action": "read_data", "data": map[string]any{"collection": "A"}},
+			want: false,
+		},
+		{
+			name: "different leaf value",
+			a:    map[string]any{"action": "read_data", "data": map[string]any{"collection": "A"}},
+			b:    map[string]any{"action": "read_data", "data": map[string]any{"collection": "B"}},
+			want: false,
+		},
+		{
+			name: "different action",
+			a:    map[string]any{"action": "read_data", "data": map[string]any{"collection": "A"}},
+			b:    map[string]any{"action": "update_data", "data": map[string]any{"collection": "A"}},
+			want: false,
+		},
+		{
+			name: "resource object vs scalar",
+			a:    map[string]any{"action": "read_data", "data": map[string]any{"collection": "A"}},
+			b:    map[string]any{"action": "read_data", "data": "*"},
+			want: false,
+		},
+		{
+			name: "identical scoped",
+			a:    map[string]any{"action": "read_data", "data": map[string]any{"collection": "A", "object": "x", "tenant": "t"}},
+			b:    map[string]any{"action": "read_data", "data": map[string]any{"tenant": "t", "object": "x", "collection": "A"}},
+			want: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := permEqual(tc.a, tc.b); got != tc.want {
+				t.Fatalf("permEqual(a, b) = %v, want %v", got, tc.want)
+			}
+			if got := permEqual(tc.b, tc.a); got != tc.want {
+				t.Fatalf("permEqual(b, a) = %v, want %v (must be symmetric)", got, tc.want)
+			}
+		})
+	}
+}
+
+// REVIEW.md finding 1: tightening a role from an unrestricted permission to
+// a scoped one must revoke the broad stored form, not silently keep it.
+func TestRoleApplyTightensBroadPermission(t *testing.T) {
+	f := newFake()
+	if _, err := applyDocs(t, f, "name: dev\npermissions:\n  - action: create_collections\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	scoped := "name: dev\npermissions:\n  - action: create_collections\n    collections: {collection: A}\n"
+	res, err := applyDocs(t, f, scoped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res[0].Action != "configured" {
+		t.Fatalf("action = %q", res[0].Action)
+	}
+	joined := strings.Join(f.calls, "\n")
+	if !strings.Contains(joined, "remove-permissions dev x1") {
+		t.Errorf("broad permission not revoked: %v", f.calls)
+	}
+	if !strings.Contains(joined, "add-permissions dev x1") {
+		t.Errorf("scoped permission not added: %v", f.calls)
+	}
+
+	// The tightened state must be stable on re-apply: only the role GET
+	// happens, and GETs are not recorded in the call log.
+	nCalls := len(f.calls)
+	res, err = applyDocs(t, f, scoped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res[0].Action != "unchanged" || len(f.calls) != nCalls {
+		t.Fatalf("re-apply action = %q, want unchanged with no mutations (calls=%v)", res[0].Action, f.calls[nCalls:])
 	}
 }
 
