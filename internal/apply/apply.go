@@ -662,7 +662,10 @@ func tenants(c *client.Client, doc manifest.Document) (Result, error) {
 			toCreate = append(toCreate, desired)
 			continue
 		}
-		if tenantStatusServerView(status) != existing.ActivityStatus &&
+		// An omitted activityStatus ("") means "don't care": never
+		// rewrite the tenant with an empty status.
+		if status != "" &&
+			tenantStatusServerView(status) != existing.ActivityStatus &&
 			strings.ToUpper(status) != existing.ActivityStatus {
 			toUpdate = append(toUpdate, desired)
 		}

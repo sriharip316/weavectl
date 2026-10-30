@@ -916,6 +916,43 @@ func TestTenantsApplyStatusEquivalence(t *testing.T) {
 	}
 }
 
+func TestTenantsApplyOmittedStatusIsNoOp(t *testing.T) {
+	f := newFake()
+	f.collections["MT"] = map[string]any{"class": "MT"}
+	f.tenants["MT"] = []map[string]any{{"name": "t1", "activityStatus": "HOT"}}
+
+	// No activityStatus means "don't care": the existing tenant must be
+	// left untouched instead of PUT with an empty activityStatus.
+	res, err := applyDocs(t, f, "collection: MT\ntenants:\n  - name: t1\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(f.calls, "\n")
+	if strings.Contains(joined, "PUT tenants") || strings.Contains(joined, "POST tenants") {
+		t.Errorf("omitted activityStatus must not mutate t1: %v", f.calls)
+	}
+	if res[0].Action != "unchanged" {
+		t.Fatalf("action = %q, want unchanged", res[0].Action)
+	}
+}
+
+func TestTenantsApplyExplicitStatusUpdate(t *testing.T) {
+	f := newFake()
+	f.collections["MT"] = map[string]any{"class": "MT"}
+	f.tenants["MT"] = []map[string]any{{"name": "t1", "activityStatus": "HOT"}}
+
+	res, err := applyDocs(t, f, "collection: MT\ntenants:\n  - name: t1\n    activityStatus: COLD\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(f.calls, "\n"), "PUT tenants") {
+		t.Errorf("explicit HOT -> COLD must be updated: %v", f.calls)
+	}
+	if res[0].Action != "configured" {
+		t.Fatalf("action = %q", res[0].Action)
+	}
+}
+
 // ---- backups and restore ----
 
 const backupManifest = `kind: Backup
