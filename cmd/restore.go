@@ -105,7 +105,7 @@ func newRestoreStatusCommand() *cobra.Command {
 				return notFoundWrap(err, "restore", backend+"/"+args[1])
 			}
 			row := []string{st.ID, st.Status, strOr(st.Error, "-")}
-			return printObjects(cmd.OutOrStdout(), format, []any{st}, restoreStatusHeaders, row)
+			return printObjects(cmd.OutOrStdout(), format, true, []any{st}, restoreStatusHeaders, row)
 		},
 	}
 	cmd.Flags().StringP("output", "o", "table", "output format: table, json or yaml")

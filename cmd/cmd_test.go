@@ -523,6 +523,49 @@ func TestCLI_Get(t *testing.T) {
 	}
 }
 
+// REVIEW.md finding 3: list queries keep the JSON array shape at any item
+// count, while named lookups print a single JSON object.
+func TestCLI_GetJSONShape(t *testing.T) {
+	mock := newMockServer()
+	srv := httptest.NewServer(mock.handler())
+	defer srv.Close()
+
+	get := func(args ...string) string {
+		t.Helper()
+		args = append(args, "--server", srv.URL)
+		out, _, err := executeCommand(args)
+		if err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		return strings.TrimSpace(out)
+	}
+
+	// The mock seeds one role, one user and one tenant: one-item lists must
+	// still render as arrays.
+	listArgs := [][]string{
+		{"get", "collections", "-o", "json"}, // two collections
+		{"get", "roles", "-o", "json"},
+		{"get", "users", "-o", "json"},
+		{"get", "tenants", "MTNews", "-o", "json"},
+	}
+	for _, args := range listArgs {
+		if out := get(args...); !strings.HasPrefix(out, "[") {
+			t.Errorf("%v: expected JSON array, got %q", args, out)
+		}
+	}
+	if out := get("get", "collection", "Articles", "-o", "json"); !strings.HasPrefix(out, "{") {
+		t.Errorf("named lookup expected JSON object, got %q", out)
+	}
+
+	// Shrinking the inventory to one collection must not change the shape.
+	mock.mu.Lock()
+	delete(mock.collections, "MTNews")
+	mock.mu.Unlock()
+	if out := get("get", "collections", "-o", "json"); !strings.HasPrefix(out, "[") {
+		t.Errorf("one-collection list expected JSON array, got %q", out)
+	}
+}
+
 func TestCLI_Create(t *testing.T) {
 	mock := newMockServer()
 	srv := httptest.NewServer(mock.handler())

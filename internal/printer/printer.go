@@ -32,15 +32,30 @@ func ParseFormat(s string) (Format, error) {
 	return "", fmt.Errorf("unknown output format %q (want table, json or yaml)", s)
 }
 
-// Print writes one or many objects in the requested format. For JSON/YAML,
-// items must be JSON-marshalable (map[string]any, typed structs, or
+// Print writes a list of objects in the requested format. JSON output is
+// always an array, whatever the item count, so list queries keep a stable
+// shape; use PrintItem for single-object queries. For JSON/YAML, items
+// must be JSON-marshalable (map[string]any, typed structs, or
 // json.RawMessage); the output is API-native so it round-trips with apply.
 func Print(out io.Writer, format Format, items []any) error {
 	switch format {
 	case FormatJSON:
-		return printJSON(out, items)
+		return encodeJSON(out, items)
 	case FormatYAML:
 		return printYAML(out, items)
+	default:
+		return fmt.Errorf("table output requires a Table, use PrintTable")
+	}
+}
+
+// PrintItem writes exactly one object in the requested format: a bare JSON
+// object rather than a one-element array, and a single YAML document.
+func PrintItem(out io.Writer, format Format, item any) error {
+	switch format {
+	case FormatJSON:
+		return encodeJSON(out, item)
+	case FormatYAML:
+		return printYAML(out, []any{item})
 	default:
 		return fmt.Errorf("table output requires a Table, use PrintTable")
 	}
@@ -84,13 +99,9 @@ func PrintTable(out io.Writer, headers []string, rows [][]string) {
 	}
 }
 
-func printJSON(out io.Writer, items []any) error {
+func encodeJSON(out io.Writer, v any) error {
 	enc := json.NewEncoder(out)
 	enc.SetIndent("", "  ")
-	var v any = items
-	if len(items) == 1 {
-		v = items[0]
-	}
 	return enc.Encode(v)
 }
 

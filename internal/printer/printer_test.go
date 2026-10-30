@@ -18,13 +18,15 @@ func TestPrintTableAlignment(t *testing.T) {
 	}
 }
 
+// REVIEW.md finding 3: list output (Print) keeps the array shape at any
+// item count; single-object output (PrintItem) prints a bare object.
 func TestPrintJSONSingleVsList(t *testing.T) {
 	var buf bytes.Buffer
 	if err := Print(&buf, FormatJSON, []any{map[string]any{"a": 1}}); err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(buf.String()) != "{\n  \"a\": 1\n}" {
-		t.Fatalf("single JSON = %q", buf.String())
+	if !strings.HasPrefix(strings.TrimSpace(buf.String()), "[") {
+		t.Fatalf("one-item list should stay an array, got %q", buf.String())
 	}
 
 	buf.Reset()
@@ -33,6 +35,22 @@ func TestPrintJSONSingleVsList(t *testing.T) {
 	}
 	if !strings.HasPrefix(strings.TrimSpace(buf.String()), "[") {
 		t.Fatalf("multi JSON should be an array, got %q", buf.String())
+	}
+
+	buf.Reset()
+	if err := PrintItem(&buf, FormatJSON, map[string]any{"a": 1}); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(buf.String()); got != "{\n  \"a\": 1\n}" {
+		t.Fatalf("item JSON = %q", got)
+	}
+
+	buf.Reset()
+	if err := PrintItem(&buf, FormatYAML, map[string]any{"a": 1}); err != nil {
+		t.Fatal(err)
+	}
+	if got := buf.String(); got != "a: 1\n" || strings.Contains(got, "---") {
+		t.Fatalf("item YAML = %q", got)
 	}
 }
 

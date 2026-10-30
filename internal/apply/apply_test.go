@@ -33,7 +33,10 @@ type fakeWeaviate struct {
 	// userTransitionStatus, when non-zero, is returned by the user
 	// activate/deactivate endpoints to simulate a state race.
 	userTransitionStatus int
-	calls                []string
+	// userAssignStatus, when non-zero, is returned by the role-assign
+	// endpoint to simulate a failure after user creation.
+	userAssignStatus int
+	calls            []string
 }
 
 // backupState scripts the statuses a backup or restore moves through;
@@ -265,6 +268,10 @@ func (f *fakeWeaviate) handler() http.Handler {
 	mux.HandleFunc("POST /v1/authz/users/{id}/assign", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
+		if f.userAssignStatus != 0 {
+			writeErr(w, f.userAssignStatus, "assign failed")
+			return
+		}
 		var body struct {
 			Roles []string `json:"roles"`
 		}
@@ -815,6 +822,26 @@ func TestUserApplyCreateDeactivated(t *testing.T) {
 	}
 	if f.userActive["bob"] {
 		t.Errorf("user still active in fake: %v", f.userActive)
+	}
+}
+
+// REVIEW.md finding 2: the API key is shown exactly once at creation, so a
+// failure in a step running after CreateUser must carry it in the error —
+// otherwise the credential is lost with no way to authenticate the user.
+func TestUserApplyFailureKeepsAPIKey(t *testing.T) {
+	f := newFake()
+	f.userAssignStatus = http.StatusInternalServerError
+	_, err := applyDocs(t, f, "userId: bob\nroles: [dev]\n")
+	if err == nil || !strings.Contains(err.Error(), "key-bob") {
+		t.Fatalf("expected assign failure to carry the generated key, got %v", err)
+	}
+
+	// Same for a deactivation failure right after creation.
+	f = newFake()
+	f.userTransitionStatus = http.StatusInternalServerError
+	_, err = applyDocs(t, f, "userId: bob\nactive: false\n")
+	if err == nil || !strings.Contains(err.Error(), "key-bob") {
+		t.Fatalf("expected deactivate failure to carry the generated key, got %v", err)
 	}
 }
 

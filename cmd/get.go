@@ -70,7 +70,7 @@ func runGet(cmd *cobra.Command, c *client.Client, typ, name string, format print
 			if err != nil {
 				return notFoundWrap(err, "collection", name)
 			}
-			return printObjects(out, format, []any{obj}, collectionHeaders, collectionRow(obj))
+			return printObjects(out, format, true, []any{obj}, collectionHeaders, collectionRow(obj))
 		}
 		list, err := weaviate.ListCollections(c)
 		if err != nil {
@@ -85,7 +85,7 @@ func runGet(cmd *cobra.Command, c *client.Client, typ, name string, format print
 			items[i] = obj
 			rows[i] = collectionRow(obj)
 		}
-		return printObjects(out, format, items, collectionHeaders, rows...)
+		return printObjects(out, format, false, items, collectionHeaders, rows...)
 
 	case "roles":
 		if single {
@@ -93,7 +93,7 @@ func runGet(cmd *cobra.Command, c *client.Client, typ, name string, format print
 			if err != nil {
 				return notFoundWrap(err, "role", name)
 			}
-			return printObjects(out, format, []any{obj}, roleHeaders, roleRow(*obj))
+			return printObjects(out, format, true, []any{obj}, roleHeaders, roleRow(*obj))
 		}
 		list, err := weaviate.ListRoles(c)
 		if err != nil {
@@ -106,7 +106,7 @@ func runGet(cmd *cobra.Command, c *client.Client, typ, name string, format print
 			items[i] = obj
 			rows[i] = roleRow(obj)
 		}
-		return printObjects(out, format, items, roleHeaders, rows...)
+		return printObjects(out, format, false, items, roleHeaders, rows...)
 
 	case "users":
 		if single {
@@ -114,7 +114,7 @@ func runGet(cmd *cobra.Command, c *client.Client, typ, name string, format print
 			if err != nil {
 				return notFoundWrap(err, "user", name)
 			}
-			return printObjects(out, format, []any{obj}, userHeaders, userRow(*obj))
+			return printObjects(out, format, true, []any{obj}, userHeaders, userRow(*obj))
 		}
 		list, err := weaviate.ListUsers(c)
 		if err != nil {
@@ -127,7 +127,7 @@ func runGet(cmd *cobra.Command, c *client.Client, typ, name string, format print
 			items[i] = obj
 			rows[i] = userRow(obj)
 		}
-		return printObjects(out, format, items, userHeaders, rows...)
+		return printObjects(out, format, false, items, userHeaders, rows...)
 
 	case "aliases":
 		list, err := weaviate.ListAliases(c)
@@ -154,7 +154,7 @@ func runGet(cmd *cobra.Command, c *client.Client, typ, name string, format print
 			items[i] = obj
 			rows[i] = aliasRow(obj)
 		}
-		return printObjects(out, format, items, aliasHeaders, rows...)
+		return printObjects(out, format, single, items, aliasHeaders, rows...)
 
 	case "tenants":
 		if !single {
@@ -175,7 +175,7 @@ func runGet(cmd *cobra.Command, c *client.Client, typ, name string, format print
 			items[i] = t
 			rows[i] = []string{t.Name, t.ActivityStatus}
 		}
-		return printObjects(out, format, items, []string{"NAME", "STATUS"}, rows...)
+		return printObjects(out, format, false, items, []string{"NAME", "STATUS"}, rows...)
 
 	case "shards":
 		if !single {
@@ -196,7 +196,7 @@ func runGet(cmd *cobra.Command, c *client.Client, typ, name string, format print
 			items[i] = s
 			rows[i] = []string{s.Name, s.Status, strconv.Itoa(s.VectorQueueSize)}
 		}
-		return printObjects(out, format, items, []string{"NAME", "STATUS", "VECTOR QUEUE"}, rows...)
+		return printObjects(out, format, false, items, []string{"NAME", "STATUS", "VECTOR QUEUE"}, rows...)
 
 	case "nodes":
 		if single {
@@ -216,7 +216,7 @@ func runGet(cmd *cobra.Command, c *client.Client, typ, name string, format print
 			}
 			rows[i] = []string{n.Name, n.Status, n.Version, n.OperationalMode, shardCount}
 		}
-		return printObjects(out, format, items, []string{"NAME", "STATUS", "VERSION", "MODE", "SHARDS"}, rows...)
+		return printObjects(out, format, false, items, []string{"NAME", "STATUS", "VERSION", "MODE", "SHARDS"}, rows...)
 
 	case "backups":
 		backend, _ := cmd.Flags().GetString("backend")
@@ -229,7 +229,7 @@ func runGet(cmd *cobra.Command, c *client.Client, typ, name string, format print
 			if err != nil {
 				return notFoundWrap(err, "backup", backend+"/"+name)
 			}
-			return printObjects(out, format, []any{st}, backupStatusHeaders, backupStatusRow(*st))
+			return printObjects(out, format, true, []any{st}, backupStatusHeaders, backupStatusRow(*st))
 		}
 		list, err := weaviate.ListBackups(c, backend)
 		if err != nil {
@@ -243,7 +243,7 @@ func runGet(cmd *cobra.Command, c *client.Client, typ, name string, format print
 			items[i] = backupManifest(backend, e)
 			rows[i] = backupRow(e)
 		}
-		return printObjects(out, format, items, backupHeaders, rows...)
+		return printObjects(out, format, false, items, backupHeaders, rows...)
 	}
 	return fmt.Errorf("unsupported type %q", typ)
 }
@@ -255,8 +255,10 @@ func notFoundWrap(err error, typ, name string) error {
 	return err
 }
 
-// printObjects renders either the table or the structured formats.
-func printObjects(out interface{ Write([]byte) (int, error) }, format printer.Format,
+// printObjects renders either the table or the structured formats. single
+// marks a named lookup versus a list query: JSON list output is always an
+// array, a named lookup prints as a bare object.
+func printObjects(out interface{ Write([]byte) (int, error) }, format printer.Format, single bool,
 	items []any, headers []string, rows ...[]string) error {
 	switch format {
 	case printer.FormatTable:
@@ -265,6 +267,9 @@ func printObjects(out interface{ Write([]byte) (int, error) }, format printer.Fo
 	default:
 		if len(items) == 0 {
 			return nil // like kubectl: structured formats print nothing when empty
+		}
+		if single {
+			return printer.PrintItem(out, format, items[0])
 		}
 		return printer.Print(out, format, items)
 	}
