@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/sriharip316/weavectl/internal/client"
 )
@@ -23,9 +24,22 @@ func TestCapitalizeName(t *testing.T) {
 		"Article": "Article",
 		"m_news":  "M_news",
 		"123":     "123",
+		// Multi-byte leading runes must be upper-cased per rune, not per
+		// byte (finding #8: byte slicing produced invalid UTF-8 or left
+		// the first rune un-capitalized).
+		"über":     "Über",
+		"École":    "École",
+		"élève":    "Élève",
+		"日本語":      "日本語", // no uppercase form: unchanged
+		"À Propos": "À Propos",
+		"\xc3\x28": "\xc3\x28", // invalid UTF-8: passed through untouched
 	} {
-		if got := CapitalizeName(input); got != want {
+		got := CapitalizeName(input)
+		if got != want {
 			t.Errorf("CapitalizeName(%q) = %q, want %q", input, got, want)
+		}
+		if utf8.ValidString(input) && !utf8.ValidString(got) {
+			t.Errorf("CapitalizeName(%q) produced invalid UTF-8: %q", input, got)
 		}
 	}
 }

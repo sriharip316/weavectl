@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/sriharip316/weavectl/internal/client"
 )
@@ -417,12 +419,20 @@ func GetMeta(c *client.Client) (*Meta, error) {
 // CapitalizeName mirrors Weaviate's server-side name normalization for
 // collections and aliases: the first character is upper-cased ("my_class"
 // is stored as "My_class"). Applying it client-side means users can refer
-// to objects with lower-case names the same way they were created.
+// to objects with lower-case names the same way they were created. The
+// first character is upper-cased per Unicode simple case mapping, so
+// multi-byte runes are handled ("über" becomes "Über"); runes without an
+// uppercase form (e.g. CJK) and names not starting with a letter are
+// returned unchanged. Names that are not valid UTF-8 are left untouched.
 func CapitalizeName(name string) string {
 	if name == "" {
 		return name
 	}
-	return strings.ToUpper(name[:1]) + name[1:]
+	r, size := utf8.DecodeRuneInString(name)
+	if r == utf8.RuneError && size == 1 {
+		return name // invalid UTF-8: pass through instead of corrupting
+	}
+	return string(unicode.ToUpper(r)) + name[size:]
 }
 
 // ResolveCollection finds an existing collection by name. Exact (and
