@@ -47,6 +47,8 @@ per backend with --backend.`,
 	}
 	cmd.Flags().StringP("output", "o", "table", "output format: table, json or yaml")
 	cmd.Flags().String("backend", "", "backup backend (required for the backups type)")
+	cmd.Flags().String("bucket", "", "backup bucket/container/volume (with get backups ID)")
+	cmd.Flags().String("path", "", "path within the bucket (with get backups ID)")
 	return cmd
 }
 
@@ -225,7 +227,7 @@ func runGet(cmd *cobra.Command, c *client.Client, typ, name string, format print
 		}
 		backend = weaviate.NormalizeBackend(backend)
 		if single {
-			st, err := weaviate.GetBackupStatus(cmd.Context(), c, backend, name, weaviate.StatusQuery{})
+			st, err := weaviate.GetBackupStatus(cmd.Context(), c, backend, name, statusQueryFromFlags(cmd))
 			if err != nil {
 				return notFoundWrap(err, "backup", backend+"/"+name)
 			}

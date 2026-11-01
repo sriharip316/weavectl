@@ -118,7 +118,7 @@ func finishBackup(cmd *cobra.Command, c *client.Client, backend, id string) erro
 	}
 	timeout, _ := cmd.Flags().GetDuration("wait-timeout")
 	return waitTerminal(cmd.Context(), out, timeout, func(ctx context.Context) (string, string, error) {
-		st, err := weaviate.GetBackupStatus(ctx, c, backend, id, weaviate.StatusQuery{})
+		st, err := weaviate.GetBackupStatus(ctx, c, backend, id, statusQueryFromFlags(cmd))
 		if err != nil {
 			return "", "", err
 		}

@@ -31,6 +31,7 @@ go.work.sum
 # .idea/
 # .vscode/
 .zcode/
+.local/
 
 # Build output
 /bin/

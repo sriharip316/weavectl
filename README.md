@@ -90,7 +90,7 @@ weavectl get aliases [NAME]          # also accepts singular: alias
 weavectl get tenants COLLECTION      # tenants within a multi-tenant collection
 weavectl get shards COLLECTION       # shard states and vector queue sizes
 weavectl get nodes                   # cluster node health, versions, and modes
-weavectl get backups --backend B [ID] # backups on a backend (ID shows one status)
+weavectl get backups --backend B [ID] # backups on a backend (ID shows one status; --bucket/--path for non-default locations)
 ```
 
 Both singular and plural resource names are supported (`collection`/`collections`, `role`/`roles`, `user`/`users`, `alias`/`aliases`, `tenant`/`tenants`, `shard`/`shards`, `node`/`nodes`).
@@ -241,7 +241,7 @@ config:
 ```bash
 weavectl apply -f examples/backup-articles.yaml   # start it
 weavectl get backups --backend filesystem         # list: ID, STATUS, SIZE, …
-weavectl get backups --backend filesystem articles-snapshot   # one status
+weavectl get backups --backend filesystem articles-snapshot   # one status (--bucket/--path if stored outside the default)
 weavectl delete backup filesystem articles-snapshot           # cancel
 ```
 
@@ -275,7 +275,15 @@ Behavior:
   `node_mapping` body field can remap them), and the restored collections
   must not already exist.
 - Backend credentials live in the server's configuration, not in weavectl.
-  For local testing `make dev-up` enables the `filesystem` backend module.
+  For local testing `make dev-up` enables the `filesystem` backend module;
+  `make integration` runs the whole suite against a local MinIO stack with
+  the `s3` backend enabled, validating the whole backup/restore flow
+  against it.
+- Backups stored at a non-default location must pass that location to
+  every status lookup and cancel: `--bucket`/`--path` (or `config.bucket`/
+  `config.path` in a manifest) are accepted by `create backup`, `restore`,
+  `get backups ID`, `restore status`, `restore cancel`, `delete backup`,
+  and `--wait` — the server only finds the backup there when asked.
 - Backup ids must be URL-safe filesystem paths (lowercase, numbers,
   `_`, `-`); validated client-side.
 
@@ -352,7 +360,7 @@ make test           # unit tests (fake server, no container needed)
 make coverage       # run tests and print function coverage summary
 make dev-up         # start Weaviate 1.40.1 in podman (RBAC + db users on)
 make dev-logs       # tail logs from the dev container
-make integration    # full end-to-end run against the dev container
+make integration    # full end-to-end run incl. S3 backups against local MinIO
 make dev-down       # stop and remove the container
 make vet            # run go vet
 make fmt            # run go fmt

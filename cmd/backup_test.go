@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/sriharip316/weavectl/internal/client"
+	"net/url"
 )
 
 // backupMock is a stateful fake of the backup API. Each backup and
@@ -26,6 +27,15 @@ type backupMock struct {
 	backups  map[string]*mockBackup
 	restores map[string]*mockBackup
 	bodies   []string // recorded JSON request bodies
+	// statusQueries records the raw query string of every backup/restore
+	// status GET; cancelQueries the same for cancel DELETEs.
+	statusQueries []string
+	cancelQueries []string
+	// wantStatusQuery, when set, makes status GETs answer 404 unless the
+	// request carries these query params — mirroring the live server,
+	// which only finds a backup stored outside its default location when
+	// the lookup sends bucket/path.
+	wantStatusQuery url.Values
 	// failNew makes subsequently created backups fail: the status script
 	// ends FAILED with createErrMsg.
 	failNew      bool
@@ -67,6 +77,35 @@ func (m *backupMock) seedBackup(backend, id string, statuses ...string) *mockBac
 	}
 	m.backups[backend+"/"+id] = b
 	return b
+}
+
+func (m *backupMock) seedRestore(backend, id string, statuses ...string) *mockBackup {
+	b := &mockBackup{backend: backend, id: id, classes: []string{"Articles"}, statuses: statuses}
+	if len(statuses) == 0 {
+		b.statuses = []string{"SUCCESS"}
+	}
+	m.restores[backend+"/"+id] = b
+	return b
+}
+
+// statusQueryOK reports whether a status GET satisfies wantStatusQuery.
+func (m *backupMock) statusQueryOK(r *http.Request) bool {
+	if m.wantStatusQuery == nil {
+		return true
+	}
+	q := r.URL.Query()
+	for k, want := range m.wantStatusQuery {
+		got, ok := q[k]
+		if !ok || len(got) != len(want) {
+			return false
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (m *backupMock) handler() http.Handler {
@@ -145,6 +184,11 @@ func (m *backupMock) handler() http.Handler {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
+		m.statusQueries = append(m.statusQueries, r.URL.RawQuery)
+		if !m.statusQueryOK(r) {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		b, ok := m.backups[r.PathValue("backend")+"/"+r.PathValue("id")]
 		if !ok {
 			w.WriteHeader(http.StatusNotFound)
@@ -156,6 +200,7 @@ func (m *backupMock) handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/backups/{backend}/{id}", func(w http.ResponseWriter, r *http.Request) {
 		m.mu.Lock()
 		defer m.mu.Unlock()
+		m.cancelQueries = append(m.cancelQueries, r.URL.RawQuery)
 		key := r.PathValue("backend") + "/" + r.PathValue("id")
 		b, ok := m.backups[key]
 		if !ok {
@@ -194,6 +239,11 @@ func (m *backupMock) handler() http.Handler {
 	mux.HandleFunc("GET /v1/backups/{backend}/{id}/restore", func(w http.ResponseWriter, r *http.Request) {
 		m.mu.Lock()
 		defer m.mu.Unlock()
+		m.statusQueries = append(m.statusQueries, r.URL.RawQuery)
+		if !m.statusQueryOK(r) {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		b, ok := m.restores[r.PathValue("backend")+"/"+r.PathValue("id")]
 		if !ok {
 			w.WriteHeader(http.StatusNotFound)
@@ -210,6 +260,7 @@ func (m *backupMock) handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/backups/{backend}/{id}/restore", func(w http.ResponseWriter, r *http.Request) {
 		m.mu.Lock()
 		defer m.mu.Unlock()
+		m.cancelQueries = append(m.cancelQueries, r.URL.RawQuery)
 		if _, ok := m.restores[r.PathValue("backend")+"/"+r.PathValue("id")]; !ok {
 			w.WriteHeader(http.StatusNotFound)
 			return
@@ -676,5 +727,143 @@ func TestCLI_BackupWaitRecoversFromTransientErrors(t *testing.T) {
 	}
 	if !strings.Contains(out, "status: SUCCESS") {
 		t.Errorf("wait did not reach SUCCESS:\n%s", out)
+	}
+}
+
+// ---- finding 3 pin tests: --bucket/--path must reach status lookups ----
+
+func TestCLI_CreateBackupWaitPassesBucketAndPathToStatus(t *testing.T) {
+	orig := backupPollInterval
+	backupPollInterval = time.Millisecond
+	defer func() { backupPollInterval = orig }()
+
+	mock := newBackupMock()
+	// Mirror the live server: a backup stored outside the default
+	// location is only found when the poll sends bucket/path.
+	mock.wantStatusQuery = url.Values{"bucket": {"bkt"}, "path": {"sub2"}}
+	srv := httptest.NewServer(mock.handler())
+	defer srv.Close()
+
+	out, _, err := executeCommand([]string{
+		"create", "backup", "filesystem", "loc-1", "--include", "Articles",
+		"--bucket", "bkt", "--path", "sub2", "--wait", "--server", srv.URL,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "status: SUCCESS") {
+		t.Errorf("wait output:\n%s", out)
+	}
+	if len(mock.statusQueries) < 2 {
+		t.Fatalf("expected >=2 status polls, got %d: %v", len(mock.statusQueries), mock.statusQueries)
+	}
+	for _, q := range mock.statusQueries {
+		if q != "bucket=bkt&path=sub2" {
+			t.Errorf("status poll query = %q, want bucket=bkt&path=sub2", q)
+		}
+	}
+}
+
+func TestCLI_RestoreWaitPassesBucketAndPathToStatus(t *testing.T) {
+	orig := backupPollInterval
+	backupPollInterval = time.Millisecond
+	defer func() { backupPollInterval = orig }()
+
+	mock := newBackupMock()
+	mock.wantStatusQuery = url.Values{"bucket": {"bkt"}, "path": {"sub2"}}
+	mock.seedBackup("filesystem", "loc-1", "SUCCESS")
+	srv := httptest.NewServer(mock.handler())
+	defer srv.Close()
+
+	out, _, err := executeCommand([]string{
+		"restore", "filesystem", "loc-1", "--include", "Articles",
+		"--bucket", "bkt", "--path", "sub2", "--wait", "--server", srv.URL,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "status: SUCCESS") {
+		t.Errorf("wait output:\n%s", out)
+	}
+	if len(mock.statusQueries) < 2 {
+		t.Fatalf("expected >=2 status polls, got %d: %v", len(mock.statusQueries), mock.statusQueries)
+	}
+	for _, q := range mock.statusQueries {
+		if q != "bucket=bkt&path=sub2" {
+			t.Errorf("status poll query = %q, want bucket=bkt&path=sub2", q)
+		}
+	}
+}
+
+func TestCLI_GetBackupsStatusPassesBucketAndPath(t *testing.T) {
+	mock := newBackupMock()
+	mock.wantStatusQuery = url.Values{"bucket": {"bkt"}, "path": {"sub2"}}
+	mock.seedBackup("filesystem", "snap-1", "SUCCESS")
+	srv := httptest.NewServer(mock.handler())
+	defer srv.Close()
+
+	out, _, err := executeCommand([]string{
+		"get", "backups", "--backend", "filesystem", "snap-1",
+		"--bucket", "bkt", "--path", "sub2", "--server", srv.URL,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "SUCCESS") {
+		t.Errorf("status output:\n%s", out)
+	}
+	if len(mock.statusQueries) != 1 || mock.statusQueries[0] != "bucket=bkt&path=sub2" {
+		t.Errorf("status queries = %v", mock.statusQueries)
+	}
+}
+
+func TestCLI_CreateManifestPrecheckPassesBucketAndPath(t *testing.T) {
+	mock := newBackupMock()
+	srv := httptest.NewServer(mock.handler())
+	defer srv.Close()
+
+	file := writeTempManifest(t, "kind: Backup\nbackend: s3\nid: loc-1\ninclude: [Articles]\nconfig:\n  bucket: bkt\n  path: sub2\n")
+	out, _, err := executeCommand([]string{"create", "-f", file, "--server", srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "backup/s3/loc-1 created") {
+		t.Errorf("create output:\n%s", out)
+	}
+	// Both the insert-only pre-check and apply's own pre-check must look
+	// the backup up in the manifest's location.
+	if len(mock.statusQueries) != 2 {
+		t.Fatalf("expected 2 status pre-checks, got %d: %v", len(mock.statusQueries), mock.statusQueries)
+	}
+	for _, q := range mock.statusQueries {
+		if q != "bucket=bkt&path=sub2" {
+			t.Errorf("status query = %q, want bucket=bkt&path=sub2", q)
+		}
+	}
+}
+
+func TestCLI_DeleteManifestCancelPassesBucketAndPath(t *testing.T) {
+	mock := newBackupMock()
+	mock.seedBackup("s3", "loc-1", "TRANSFERRING")
+	mock.seedRestore("s3", "loc-2", "TRANSFERRING")
+	srv := httptest.NewServer(mock.handler())
+	defer srv.Close()
+
+	file := writeTempManifest(t, "kind: Backup\nbackend: s3\nid: loc-1\nconfig:\n  bucket: bkt\n  path: sub2\n---\nkind: Restore\nbackend: s3\nid: loc-2\nconfig:\n  bucket: bkt\n  path: sub2\n")
+	out, _, err := executeCommand([]string{"delete", "-f", file, "--server", srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `backup "s3/loc-1" canceled`) ||
+		!strings.Contains(out, `restore "s3/loc-2" canceled`) {
+		t.Errorf("delete output:\n%s", out)
+	}
+	if len(mock.cancelQueries) != 2 {
+		t.Fatalf("expected 2 cancel DELETEs, got %d: %v", len(mock.cancelQueries), mock.cancelQueries)
+	}
+	for _, q := range mock.cancelQueries {
+		if q != "bucket=bkt&path=sub2" {
+			t.Errorf("cancel query = %q, want bucket=bkt&path=sub2", q)
+		}
 	}
 }

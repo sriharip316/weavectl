@@ -225,6 +225,42 @@ func TestPrepareRestoreBody(t *testing.T) {
 	}
 }
 
+func TestStatusQueryFromManifest(t *testing.T) {
+	cases := []struct {
+		name string
+		obj  map[string]any
+		want StatusQuery
+	}{
+		{"lowercase config", map[string]any{
+			"id": "x", "config": map[string]any{"bucket": "b", "path": "p"},
+		}, StatusQuery{Bucket: "b", Path: "p"}},
+		{"api-cased config", map[string]any{
+			"id": "x", "config": map[string]any{"Bucket": "b", "Path": "p"},
+		}, StatusQuery{Bucket: "b", Path: "p"}},
+		{"mixed casing", map[string]any{
+			"id": "x", "config": map[string]any{"Bucket": "b", "path": "p"},
+		}, StatusQuery{Bucket: "b", Path: "p"}},
+		{"path only", map[string]any{
+			"id": "x", "config": map[string]any{"path": "p"},
+		}, StatusQuery{Path: "p"}},
+		{"no config", map[string]any{"id": "x"}, StatusQuery{}},
+		{"config not a map", map[string]any{"id": "x", "config": "b"}, StatusQuery{}},
+		{"non-string ignored", map[string]any{
+			"id": "x", "config": map[string]any{"bucket": 42, "path": "p"},
+		}, StatusQuery{Path: "p"}},
+		{"empty strings ignored", map[string]any{
+			"id": "x", "config": map[string]any{"bucket": "", "path": "p"},
+		}, StatusQuery{Path: "p"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := StatusQueryFromManifest(tc.obj); got != tc.want {
+				t.Errorf("StatusQueryFromManifest() = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestBackupHelpers(t *testing.T) {
 	for id, ok := range map[string]bool{
 		"snap-1": true, "a_b-c9": true, "": false, "Snap": false,

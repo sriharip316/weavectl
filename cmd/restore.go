@@ -58,7 +58,7 @@ or CANCELED and exits non-zero on failure.
 			}
 			timeout, _ := cmd.Flags().GetDuration("wait-timeout")
 			return waitTerminal(cmd.Context(), out, timeout, func(ctx context.Context) (string, string, error) {
-				st, err := weaviate.GetRestoreStatus(ctx, c, backend, id, weaviate.StatusQuery{})
+				st, err := weaviate.GetRestoreStatus(ctx, c, backend, id, statusQueryFromFlags(cmd))
 				if err != nil {
 					return "", "", err
 				}

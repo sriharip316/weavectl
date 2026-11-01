@@ -3,7 +3,7 @@ DEST    := bin/$(BINARY)
 IMAGE   := docker.io/semitechnologies/weaviate:1.40.1
 ROOTKEY := root-key-1
 
-.PHONY: build test coverage fmt vet lint clean install dev-up dev-down dev-logs integration
+.PHONY: build test coverage fmt vet lint clean install dev-up dev-down dev-logs integration s3-up s3-down
 
 build:
 	go build -ldflags "-X github.com/sriharip316/weavectl/cmd.Version=$(shell git describe --tags --always --dirty 2>/dev/null || echo dev)" -o $(DEST) .
@@ -36,7 +36,7 @@ install: build
 # enabled — the configuration weavectl's role and user commands need —
 # plus the filesystem backup module the backup/restore commands need.
 dev-up:
-	podman rm -f weavectl-dev >/dev/null 2>&1 || true
+	podman rm -f weavectl-dev weavectl-s3-dev >/dev/null 2>&1 || true
 	podman run -d --name weavectl-dev -p 8080:8080 \
 	  -e AUTHENTICATION_APIKEY_ENABLED=true \
 	  -e AUTHENTICATION_APIKEY_ALLOWED_KEYS=$(ROOTKEY) \
@@ -57,6 +57,16 @@ dev-down:
 dev-logs:
 	podman logs -f weavectl-dev
 
-# End-to-end run of the whole command surface against the dev container.
-integration: build dev-up
+# End-to-end run of the whole command surface against the MinIO stack,
+# which has both backup backends: the suite covers everything, including
+# the S3 backup flows and --bucket/--path propagation (finding 3).
+integration: build s3-up
 	WEAVECTL_SERVER=http://localhost:8080 WEAVECTL_API_KEY=$(ROOTKEY) bash scripts/integration.sh
+
+# The MinIO + Weaviate(backup-s3) stack that integration runs against;
+# start/stop it standalone for manual poking.
+s3-up:
+	bash scripts/integration.sh s3-up
+
+s3-down:
+	bash scripts/integration.sh s3-down

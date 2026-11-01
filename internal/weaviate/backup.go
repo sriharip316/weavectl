@@ -114,6 +114,31 @@ type StatusQuery struct {
 	Path   string
 }
 
+// StatusQueryFromManifest extracts the optional bucket/path location
+// override from a backup/restore document's config section, accepting
+// either lowercase or API-cased keys. Documents stored outside the
+// backend's default location must carry it into every status lookup and
+// cancel: the server only finds them there when asked.
+func StatusQueryFromManifest(obj map[string]any) StatusQuery {
+	cfg, _ := obj["config"].(map[string]any)
+	if cfg == nil {
+		return StatusQuery{}
+	}
+	return StatusQuery{
+		Bucket: configString(cfg, "bucket", "Bucket"),
+		Path:   configString(cfg, "path", "Path"),
+	}
+}
+
+func configString(cfg map[string]any, keys ...string) string {
+	for _, k := range keys {
+		if v, ok := cfg[k].(string); ok && v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 func (q StatusQuery) query() string {
 	v := url.Values{}
 	if q.Bucket != "" {

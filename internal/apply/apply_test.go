@@ -371,6 +371,7 @@ func (f *fakeWeaviate) handler() http.Handler {
 	mux.HandleFunc("GET /v1/backups/{backend}/{id}", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
+		f.record("GET backup status %s/%s query=%s", r.PathValue("backend"), r.PathValue("id"), r.URL.RawQuery)
 		st, ok := f.backups[r.PathValue("backend")+"/"+r.PathValue("id")]
 		if !ok {
 			w.WriteHeader(http.StatusNotFound)
@@ -398,6 +399,7 @@ func (f *fakeWeaviate) handler() http.Handler {
 	mux.HandleFunc("GET /v1/backups/{backend}/{id}/restore", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
+		f.record("GET restore status %s/%s query=%s", r.PathValue("backend"), r.PathValue("id"), r.URL.RawQuery)
 		st, ok := f.restores[r.PathValue("backend")+"/"+r.PathValue("id")]
 		if !ok {
 			w.WriteHeader(http.StatusNotFound)
@@ -1115,5 +1117,31 @@ func TestRestoreApplyRestartsFailedAttempt(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(res[0].Info, " "), "previous attempt FAILED: class exists") {
 		t.Fatalf("info = %v", res[0].Info)
+	}
+}
+
+// Finding 3 pin: apply's backup/restore pre-checks must look the backup
+// up in the manifest's own config bucket/path, not the backend default.
+func TestBackupRestoreApplySendsManifestLocation(t *testing.T) {
+	f := newFake()
+
+	res, err := applyDocs(t, f, "kind: Backup\nbackend: s3\nid: loc-1\ninclude: [Articles]\nconfig:\n  bucket: bkt\n  path: sub2\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res[0].Action != "created" {
+		t.Fatalf("backup res = %+v", res[0])
+	}
+
+	if _, err := applyDocs(t, f, "kind: Restore\nbackend: s3\nid: loc-1\ninclude: [Articles]\nconfig:\n  bucket: bkt\n  path: sub2\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	joined := strings.Join(f.calls, "\n")
+	if n := strings.Count(joined, "GET backup status s3/loc-1 query=bucket=bkt&path=sub2"); n != 1 {
+		t.Errorf("backup pre-check queries wrong: %v", f.calls)
+	}
+	if n := strings.Count(joined, "GET restore status s3/loc-1 query=bucket=bkt&path=sub2"); n != 1 {
+		t.Errorf("restore pre-check queries wrong: %v", f.calls)
 	}
 }
