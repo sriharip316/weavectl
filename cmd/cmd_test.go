@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // mockServer provides an in-memory Weaviate REST API for testing all CLI commands.
@@ -406,13 +409,19 @@ func (m *mockServer) handler() http.Handler {
 }
 
 func executeCommand(args []string) (string, string, error) {
+	return executeCommandContext(context.Background(), args)
+}
+
+// executeCommandContext is executeCommand with an injected context, the
+// same way Execute hands the signal-aware context to Cobra.
+func executeCommandContext(ctx context.Context, args []string) (string, string, error) {
 	cmd := NewRootCommand()
 	var stdout, stderr bytes.Buffer
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
 	cmd.SetArgs(args)
 
-	err := cmd.Execute()
+	err := cmd.ExecuteContext(ctx)
 	return stdout.String(), stderr.String(), err
 }
 
@@ -458,6 +467,64 @@ func TestCLI_ConcurrentExecuteNoRace(t *testing.T) {
 		if !strings.Contains(r.out, "Weaviate 1.40.1") {
 			t.Errorf("concurrent execution %d: unexpected output %q", i, r.out)
 		}
+	}
+}
+
+// ---- finding 6 pin tests: the command context must reach every HTTP call ----
+
+// TestCLI_SignalContextAbortsInFlightRequest pins the fix for context
+// cancellation dropped across subcommands: Execute hands Cobra a
+// signal-aware context and the first SIGINT cancels it, so with a server
+// that never answers, canceling that context must abort the in-flight
+// request and return promptly. The pre-fix code issued every request on
+// context.Background(), so the command hung until the 30s client timeout
+// expired — what the live SIGINT probe against a delaying proxy
+// reproduced on 2026-11-01.
+func TestCLI_SignalContextAbortsInFlightRequest(t *testing.T) {
+	var arrivedOnce sync.Once
+	arrived := make(chan struct{})
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		arrivedOnce.Do(func() { close(arrived) })
+		<-release // hold the request open, like a delayed server
+	}))
+	defer srv.Close()
+	defer close(release) // unblock the handler before srv.Close waits on it
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	type execResult struct {
+		out string
+		err error
+	}
+	resCh := make(chan execResult, 1)
+	start := time.Now()
+	go func() {
+		out, _, err := executeCommandContext(ctx, []string{"get", "nodes", "--server", srv.URL})
+		resCh <- execResult{out: out, err: err}
+	}()
+
+	select {
+	case <-arrived:
+	case <-time.After(5 * time.Second):
+		t.Fatal("request never reached the server")
+	}
+	cancel() // what setupSignalHandler does on the first SIGINT
+
+	select {
+	case res := <-resCh:
+		if elapsed := time.Since(start); elapsed > 5*time.Second {
+			t.Fatalf("cancel took %s to abort the request", elapsed)
+		}
+		if res.err == nil {
+			t.Fatal("want a cancellation error, got nil")
+		}
+		if !errors.Is(res.err, context.Canceled) && !strings.Contains(res.err.Error(), "canceled") {
+			t.Fatalf("want a cancellation error, got %v", res.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("command did not return after context cancellation; HTTP calls ignore the command context")
 	}
 }
 

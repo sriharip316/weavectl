@@ -24,7 +24,7 @@ func TestCreateBackup(t *testing.T) {
 	c, done := newTestClient(mux)
 	defer done()
 
-	resp, err := CreateBackup(c, "filesystem", map[string]any{
+	resp, err := CreateBackup(context.Background(), c, "filesystem", map[string]any{
 		"id":      "snap-1",
 		"include": []string{"Articles", "Books"},
 		"config":  map[string]any{"CPUPercentage": 60},
@@ -71,7 +71,7 @@ func TestListAndGetBackupStatus(t *testing.T) {
 	c, done := newTestClient(mux)
 	defer done()
 
-	list, err := ListBackups(c, "filesystem")
+	list, err := ListBackups(context.Background(), c, "filesystem")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestCancelBackup(t *testing.T) {
 	c, done := newTestClient(mux)
 	defer done()
 
-	if err := CancelBackup(c, "filesystem", "snap-1", StatusQuery{}); err != nil {
+	if err := CancelBackup(context.Background(), c, "filesystem", "snap-1", StatusQuery{}); err != nil {
 		t.Fatal(err)
 	}
 	if gotMethod != http.MethodDelete || gotPath != "/v1/backups/filesystem/snap-1" {
@@ -137,7 +137,7 @@ func TestRestoreEndpoints(t *testing.T) {
 	c, done := newTestClient(mux)
 	defer done()
 
-	resp, err := RestoreBackup(c, "filesystem", "snap-1", map[string]any{
+	resp, err := RestoreBackup(context.Background(), c, "filesystem", "snap-1", map[string]any{
 		"include":        []string{"Articles"},
 		"node_mapping":   map[string]string{"n1": "n2"},
 		"overwriteAlias": true,
@@ -163,7 +163,7 @@ func TestRestoreEndpoints(t *testing.T) {
 	if st.Status != "SUCCESS" {
 		t.Errorf("restore status = %q", st.Status)
 	}
-	if err := CancelRestore(c, "filesystem", "snap-1", StatusQuery{}); err != nil {
+	if err := CancelRestore(context.Background(), c, "filesystem", "snap-1", StatusQuery{}); err != nil {
 		t.Fatal(err)
 	}
 }

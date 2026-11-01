@@ -1,6 +1,7 @@
 package apply
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -478,7 +479,7 @@ func applyDocs(t *testing.T, f *fakeWeaviate, yaml string) ([]Result, error) {
 	t.Helper()
 	srv := httptest.NewServer(f.handler())
 	t.Cleanup(srv.Close)
-	return Apply(client.New(srv.URL, ""), doc(t, yaml))
+	return Apply(context.Background(), client.New(srv.URL, ""), doc(t, yaml))
 }
 
 func TestRoleApplyCreate(t *testing.T) {

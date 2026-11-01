@@ -27,7 +27,8 @@ type Result struct {
 }
 
 // Apply converges each document toward its desired state, in order.
-func Apply(c *client.Client, docs []manifest.Document) ([]Result, error) {
+// Canceling ctx aborts the current step's request.
+func Apply(ctx context.Context, c *client.Client, docs []manifest.Document) ([]Result, error) {
 	var results []Result
 	for _, doc := range docs {
 		var (
@@ -36,19 +37,19 @@ func Apply(c *client.Client, docs []manifest.Document) ([]Result, error) {
 		)
 		switch doc.Kind {
 		case manifest.KindCollection:
-			r, err = collection(c, doc)
+			r, err = collection(ctx, c, doc)
 		case manifest.KindRole:
-			r, err = role(c, doc)
+			r, err = role(ctx, c, doc)
 		case manifest.KindUser:
-			r, err = user(c, doc)
+			r, err = user(ctx, c, doc)
 		case manifest.KindAlias:
-			r, err = alias(c, doc)
+			r, err = alias(ctx, c, doc)
 		case manifest.KindTenants:
-			r, err = tenants(c, doc)
+			r, err = tenants(ctx, c, doc)
 		case manifest.KindBackup:
-			r, err = backup(c, doc)
+			r, err = backup(ctx, c, doc)
 		case manifest.KindRestore:
-			r, err = restore(c, doc)
+			r, err = restore(ctx, c, doc)
 		default:
 			err = fmt.Errorf("cannot apply a %q object; add a kind field to the manifest", doc.Kind)
 		}
@@ -73,20 +74,20 @@ func Apply(c *client.Client, docs []manifest.Document) ([]Result, error) {
 
 // ---- collections ----
 
-func collection(c *client.Client, doc manifest.Document) (Result, error) {
+func collection(ctx context.Context, c *client.Client, doc manifest.Document) (Result, error) {
 	desired := doc.Object
 	name := weaviate.CapitalizeName(doc.Name)
 
-	resolved, err := weaviate.ResolveCollection(c, doc.Name)
+	resolved, err := weaviate.ResolveCollection(ctx, c, doc.Name)
 	if err == nil {
 		name = resolved
 	} else if !client.IsNotFound(err) {
 		return Result{}, err
 	}
 
-	current, err := weaviate.GetCollection(c, name)
+	current, err := weaviate.GetCollection(ctx, c, name)
 	if client.IsNotFound(err) {
-		if _, err := weaviate.CreateCollection(c, desired); err != nil {
+		if _, err := weaviate.CreateCollection(ctx, c, desired); err != nil {
 			return Result{}, err
 		}
 		return Result{Name: name, Action: "created"}, nil
@@ -147,12 +148,12 @@ func collection(c *client.Client, doc manifest.Document) (Result, error) {
 	// Go's json.Marshal sorts map keys, so canonical bytes comparison works.
 	configChanged := !bytesEqualJSON(body, current)
 
-	if _, err := weaviate.UpdateCollection(c, name, body); err != nil {
+	if _, err := weaviate.UpdateCollection(ctx, c, name, body); err != nil {
 		return res, err
 	}
 
 	for _, np := range newProps {
-		if err := weaviate.AddProperty(c, name, np); err != nil {
+		if err := weaviate.AddProperty(ctx, c, name, np); err != nil {
 			return res, fmt.Errorf("add property %q: %w", propertyName(np), err)
 		}
 		res.Info = append(res.Info, fmt.Sprintf("property %q added", propertyName(np)))
@@ -277,7 +278,7 @@ var permissionDomains = map[string]struct {
 // capitalizes server-side; mirroring that here keeps diffs convergent.
 var nameFields = map[string]bool{"collection": true, "alias": true}
 
-func role(c *client.Client, doc manifest.Document) (Result, error) {
+func role(ctx context.Context, c *client.Client, doc manifest.Document) (Result, error) {
 	desired := &weaviate.Role{Name: doc.Name}
 	if rawPerms, ok := doc.Object["permissions"].([]any); ok {
 		for _, p := range rawPerms {
@@ -287,9 +288,9 @@ func role(c *client.Client, doc manifest.Document) (Result, error) {
 		}
 	}
 
-	current, err := weaviate.GetRole(c, desired.Name)
+	current, err := weaviate.GetRole(ctx, c, desired.Name)
 	if client.IsNotFound(err) {
-		if err := weaviate.CreateRole(c, *desired); err != nil {
+		if err := weaviate.CreateRole(ctx, c, *desired); err != nil {
 			return Result{}, err
 		}
 		return Result{Name: desired.Name, Action: "created"}, nil
@@ -326,14 +327,14 @@ func role(c *client.Client, doc manifest.Document) (Result, error) {
 	if len(toAdd) > 0 || len(toRemove) > 0 {
 		res.Action = "configured"
 		if len(toAdd) > 0 {
-			if err := weaviate.AddPermissions(c, desired.Name, toAdd); err != nil {
+			if err := weaviate.AddPermissions(ctx, c, desired.Name, toAdd); err != nil {
 				return res, fmt.Errorf("add permissions: %w", err)
 			}
 			res.Info = append(res.Info, fmt.Sprintf("added %d permission(s)", len(toAdd)))
 		}
 		if len(toRemove) > 0 {
 			// Removing uses the server's stored form so the server can match it.
-			if err := weaviate.RemovePermissions(c, desired.Name, toRemove); err != nil {
+			if err := weaviate.RemovePermissions(ctx, c, desired.Name, toRemove); err != nil {
 				return res, fmt.Errorf("remove permissions: %w", err)
 			}
 			res.Info = append(res.Info, fmt.Sprintf("removed %d permission(s)", len(toRemove)))
@@ -473,7 +474,7 @@ func permEqual(a, b map[string]any) bool {
 
 // ---- users ----
 
-func user(c *client.Client, doc manifest.Document) (Result, error) {
+func user(ctx context.Context, c *client.Client, doc manifest.Document) (Result, error) {
 	userID := doc.Name
 	var desiredRoles []string
 	if raw, ok := doc.Object["roles"].([]any); ok {
@@ -497,10 +498,10 @@ func user(c *client.Client, doc manifest.Document) (Result, error) {
 	// Set when the user is created below; Weaviate shows the key exactly
 	// once, so any later failed step must repeat it in its error.
 	var apiKey string
-	current, err := weaviate.GetUser(c, userID)
+	current, err := weaviate.GetUser(ctx, c, userID)
 	res := Result{Name: userID}
 	if client.IsNotFound(err) {
-		apiKey, err = weaviate.CreateUser(c, userID)
+		apiKey, err = weaviate.CreateUser(ctx, c, userID)
 		if err != nil {
 			return res, err
 		}
@@ -509,7 +510,7 @@ func user(c *client.Client, doc manifest.Document) (Result, error) {
 			"API key (shown once, store it now): "+apiKey)
 		// CreateUser always yields an active user.
 		if hasActive && !desiredActive {
-			if err := weaviate.DeactivateUser(c, userID); err != nil {
+			if err := weaviate.DeactivateUser(ctx, c, userID); err != nil {
 				return res, fmt.Errorf("deactivate user: %w", err)
 			}
 			res.Info = append(res.Info, "deactivated user")
@@ -521,13 +522,13 @@ func user(c *client.Client, doc manifest.Document) (Result, error) {
 		if _, hasRoles := doc.Object["roles"]; hasRoles {
 			toAssign, toRevoke := diffStrings(current.Roles, desiredRoles)
 			if len(toAssign) > 0 {
-				if err := weaviate.AssignRoles(c, userID, toAssign); err != nil {
+				if err := weaviate.AssignRoles(ctx, c, userID, toAssign); err != nil {
 					return res, fmt.Errorf("assign roles: %w", err)
 				}
 				res.Info = append(res.Info, "assigned role(s): "+strings.Join(toAssign, ", "))
 			}
 			if len(toRevoke) > 0 {
-				if err := weaviate.RevokeRoles(c, userID, toRevoke); err != nil {
+				if err := weaviate.RevokeRoles(ctx, c, userID, toRevoke); err != nil {
 					return res, fmt.Errorf("revoke roles: %w", err)
 				}
 				res.Info = append(res.Info, "revoked role(s): "+strings.Join(toRevoke, ", "))
@@ -540,12 +541,12 @@ func user(c *client.Client, doc manifest.Document) (Result, error) {
 			// A 409 means the state flipped since the read; the desired
 			// state already holds, so treat it as success.
 			if desiredActive {
-				if err := weaviate.ActivateUser(c, userID); err != nil && !client.IsConflict(err) {
+				if err := weaviate.ActivateUser(ctx, c, userID); err != nil && !client.IsConflict(err) {
 					return res, fmt.Errorf("activate user: %w", err)
 				}
 				res.Info = append(res.Info, "activated user")
 			} else {
-				if err := weaviate.DeactivateUser(c, userID); err != nil && !client.IsConflict(err) {
+				if err := weaviate.DeactivateUser(ctx, c, userID); err != nil && !client.IsConflict(err) {
 					return res, fmt.Errorf("deactivate user: %w", err)
 				}
 				res.Info = append(res.Info, "deactivated user")
@@ -556,7 +557,7 @@ func user(c *client.Client, doc manifest.Document) (Result, error) {
 
 	// A newly created user may still need its roles assigned.
 	if res.Action == "created" && len(desiredRoles) > 0 {
-		if err := weaviate.AssignRoles(c, userID, desiredRoles); err != nil {
+		if err := weaviate.AssignRoles(ctx, c, userID, desiredRoles); err != nil {
 			return res, fmt.Errorf("assign roles: %w", err)
 		}
 		res.Info = append(res.Info, "assigned role(s): "+strings.Join(desiredRoles, ", "))
@@ -588,10 +589,10 @@ func diffStrings(current, desired []string) (toAdd, toRemove []string) {
 
 // ---- aliases ----
 
-func alias(c *client.Client, doc manifest.Document) (Result, error) {
+func alias(ctx context.Context, c *client.Client, doc manifest.Document) (Result, error) {
 	name := weaviate.CapitalizeName(doc.Name)
 	target, _ := doc.Object["class"].(string)
-	if resolved, err := weaviate.ResolveCollection(c, target); err == nil {
+	if resolved, err := weaviate.ResolveCollection(ctx, c, target); err == nil {
 		target = resolved
 	} else if !client.IsNotFound(err) {
 		return Result{}, err
@@ -599,7 +600,7 @@ func alias(c *client.Client, doc manifest.Document) (Result, error) {
 		target = weaviate.CapitalizeName(target)
 	}
 
-	current, err := weaviate.ListAliases(c)
+	current, err := weaviate.ListAliases(ctx, c)
 	if err != nil {
 		return Result{}, err
 	}
@@ -609,14 +610,14 @@ func alias(c *client.Client, doc manifest.Document) (Result, error) {
 			if a.Class == target {
 				return Result{Name: name, Action: "unchanged"}, nil
 			}
-			if err := weaviate.UpdateAlias(c, name, target); err != nil {
+			if err := weaviate.UpdateAlias(ctx, c, name, target); err != nil {
 				return Result{}, err
 			}
 			return Result{Name: name, Action: "configured",
 				Info: []string{fmt.Sprintf("retargeted %s: %s -> %s", name, a.Class, target)}}, nil
 		}
 	}
-	if err := weaviate.CreateAlias(c, weaviate.Alias{Alias: name, Class: target}); err != nil {
+	if err := weaviate.CreateAlias(ctx, c, weaviate.Alias{Alias: name, Class: target}); err != nil {
 		return Result{}, err
 	}
 	return Result{Name: name, Action: "created"}, nil
@@ -637,17 +638,17 @@ func tenantStatusServerView(s string) string {
 	return strings.ToUpper(s)
 }
 
-func tenants(c *client.Client, doc manifest.Document) (Result, error) {
+func tenants(ctx context.Context, c *client.Client, doc manifest.Document) (Result, error) {
 	td, err := doc.TenantsDoc()
 	if err != nil {
 		return Result{}, err
 	}
-	collection, err := weaviate.ResolveCollection(c, td.Collection)
+	collection, err := weaviate.ResolveCollection(ctx, c, td.Collection)
 	if err != nil {
 		return Result{}, fmt.Errorf("collection %q: %w", td.Collection, err)
 	}
 
-	current, err := weaviate.ListTenants(c, collection)
+	current, err := weaviate.ListTenants(ctx, c, collection)
 	if err != nil {
 		return Result{}, err
 	}
@@ -677,14 +678,14 @@ func tenants(c *client.Client, doc manifest.Document) (Result, error) {
 	}
 
 	if len(toCreate) > 0 {
-		if err := weaviate.CreateTenants(c, collection, toCreate); err != nil {
+		if err := weaviate.CreateTenants(ctx, c, collection, toCreate); err != nil {
 			return res, err
 		}
 		res.Action = "configured"
 		res.Info = append(res.Info, fmt.Sprintf("created tenant(s): %s", tenantNames(toCreate)))
 	}
 	if len(toUpdate) > 0 {
-		if err := weaviate.UpdateTenants(c, collection, toUpdate); err != nil {
+		if err := weaviate.UpdateTenants(ctx, c, collection, toUpdate); err != nil {
 			return res, err
 		}
 		res.Action = "configured"
@@ -708,7 +709,7 @@ func tenantNames(ts []weaviate.Tenant) string {
 // one-shot on the server: apply either starts them or reports the
 // existing attempt — there is no "configured" action.
 
-func backup(c *client.Client, doc manifest.Document) (Result, error) {
+func backup(ctx context.Context, c *client.Client, doc manifest.Document) (Result, error) {
 	backend := weaviate.NormalizeBackend(doc.Backend())
 	body, err := weaviate.PrepareBackupBody(doc.Object)
 	if err != nil {
@@ -717,7 +718,7 @@ func backup(c *client.Client, doc manifest.Document) (Result, error) {
 	id := doc.BackupID()
 	res := Result{Name: backend + "/" + id}
 
-	current, err := weaviate.GetBackupStatus(context.Background(), c, backend, id, weaviate.StatusQueryFromManifest(doc.Object))
+	current, err := weaviate.GetBackupStatus(ctx, c, backend, id, weaviate.StatusQueryFromManifest(doc.Object))
 	if err == nil {
 		terminal, success := weaviate.BackupPhaseDone(current.Status)
 		switch {
@@ -738,7 +739,7 @@ func backup(c *client.Client, doc manifest.Document) (Result, error) {
 		return res, err
 	}
 
-	created, err := weaviate.CreateBackup(c, backend, body)
+	created, err := weaviate.CreateBackup(ctx, c, backend, body)
 	if err != nil {
 		return res, err
 	}
@@ -749,7 +750,7 @@ func backup(c *client.Client, doc manifest.Document) (Result, error) {
 	return res, nil
 }
 
-func restore(c *client.Client, doc manifest.Document) (Result, error) {
+func restore(ctx context.Context, c *client.Client, doc manifest.Document) (Result, error) {
 	backend := weaviate.NormalizeBackend(doc.Backend())
 	id := doc.BackupID()
 	if err := weaviate.ValidateBackupID(id); err != nil {
@@ -761,7 +762,7 @@ func restore(c *client.Client, doc manifest.Document) (Result, error) {
 	}
 	res := Result{Name: backend + "/" + id}
 
-	current, err := weaviate.GetRestoreStatus(context.Background(), c, backend, id, weaviate.StatusQueryFromManifest(doc.Object))
+	current, err := weaviate.GetRestoreStatus(ctx, c, backend, id, weaviate.StatusQueryFromManifest(doc.Object))
 	if err == nil {
 		terminal, success := weaviate.BackupPhaseDone(current.Status)
 		switch {
@@ -781,7 +782,7 @@ func restore(c *client.Client, doc manifest.Document) (Result, error) {
 		return res, err
 	}
 
-	started, err := weaviate.RestoreBackup(c, backend, id, body)
+	started, err := weaviate.RestoreBackup(ctx, c, backend, id, body)
 	if err != nil {
 		return res, err
 	}

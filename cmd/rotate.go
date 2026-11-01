@@ -35,7 +35,7 @@ new key is printed exactly once, like create user; store it now.`,
 			if err != nil {
 				return err
 			}
-			apiKey, err := weaviate.RotateUserKey(c, args[0])
+			apiKey, err := weaviate.RotateUserKey(cmd.Context(), c, args[0])
 			if err != nil {
 				return err
 			}

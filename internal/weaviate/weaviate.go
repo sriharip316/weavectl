@@ -21,13 +21,9 @@ import (
 // must diff user intent against that normalized shape without this CLI
 // modeling every field.
 
-func doGet(c *client.Client, path string) (json.RawMessage, error) {
-	return doGetContext(context.Background(), c, path)
-}
-
-// doGetContext is doGet with a context; canceling ctx aborts the request.
-func doGetContext(ctx context.Context, c *client.Client, path string) (json.RawMessage, error) {
-	return c.DoContext(ctx, http.MethodGet, path, nil)
+// doGet performs a GET; canceling ctx aborts the request.
+func doGet(ctx context.Context, c *client.Client, path string) (json.RawMessage, error) {
+	return c.Do(ctx, http.MethodGet, path, nil)
 }
 
 // ---- Collections (schema) ----
@@ -35,8 +31,8 @@ func doGetContext(ctx context.Context, c *client.Client, path string) (json.RawM
 type Collection = map[string]any
 
 // ListCollections returns the classes from GET /v1/schema.
-func ListCollections(c *client.Client) ([]Collection, error) {
-	raw, err := doGet(c, "/schema")
+func ListCollections(ctx context.Context, c *client.Client) ([]Collection, error) {
+	raw, err := doGet(ctx, c, "/schema")
 	if err != nil {
 		return nil, err
 	}
@@ -50,11 +46,11 @@ func ListCollections(c *client.Client) ([]Collection, error) {
 }
 
 // GetCollection fetches a single collection definition.
-func GetCollection(c *client.Client, name string) (Collection, error) {
+func GetCollection(ctx context.Context, c *client.Client, name string) (Collection, error) {
 	if strings.TrimSpace(name) == "" {
 		return nil, &client.APIError{StatusCode: http.StatusNotFound}
 	}
-	raw, err := doGet(c, "/schema/"+url.PathEscape(name))
+	raw, err := doGet(ctx, c, "/schema/"+url.PathEscape(name))
 	if err != nil {
 		return nil, err
 	}
@@ -65,8 +61,8 @@ func GetCollection(c *client.Client, name string) (Collection, error) {
 	return out, nil
 }
 
-func CreateCollection(c *client.Client, def Collection) (Collection, error) {
-	raw, err := c.Do(http.MethodPost, "/schema", def)
+func CreateCollection(ctx context.Context, c *client.Client, def Collection) (Collection, error) {
+	raw, err := c.Do(ctx, http.MethodPost, "/schema", def)
 	if err != nil {
 		return nil, err
 	}
@@ -80,11 +76,11 @@ func CreateCollection(c *client.Client, def Collection) (Collection, error) {
 // UpdateCollection performs the mutable-config PUT. The body must be the
 // full class definition including all existing properties (the server
 // rejects partial bodies); callers are responsible for assembling it.
-func UpdateCollection(c *client.Client, name string, def Collection) (Collection, error) {
+func UpdateCollection(ctx context.Context, c *client.Client, name string, def Collection) (Collection, error) {
 	if strings.TrimSpace(name) == "" {
 		return nil, &client.APIError{StatusCode: http.StatusNotFound}
 	}
-	raw, err := c.Do(http.MethodPut, "/schema/"+url.PathEscape(name), def)
+	raw, err := c.Do(ctx, http.MethodPut, "/schema/"+url.PathEscape(name), def)
 	if err != nil {
 		return nil, err
 	}
@@ -95,17 +91,17 @@ func UpdateCollection(c *client.Client, name string, def Collection) (Collection
 	return out, nil
 }
 
-func DeleteCollection(c *client.Client, name string) error {
+func DeleteCollection(ctx context.Context, c *client.Client, name string) error {
 	if strings.TrimSpace(name) == "" {
 		return &client.APIError{StatusCode: http.StatusNotFound}
 	}
-	_, err := c.Do(http.MethodDelete, "/schema/"+url.PathEscape(name), nil)
+	_, err := c.Do(ctx, http.MethodDelete, "/schema/"+url.PathEscape(name), nil)
 	return err
 }
 
 // AddProperty attaches a new property to a collection.
-func AddProperty(c *client.Client, collection string, prop map[string]any) error {
-	_, err := c.Do(http.MethodPost, "/schema/"+url.PathEscape(collection)+"/properties", prop)
+func AddProperty(ctx context.Context, c *client.Client, collection string, prop map[string]any) error {
+	_, err := c.Do(ctx, http.MethodPost, "/schema/"+url.PathEscape(collection)+"/properties", prop)
 	return err
 }
 
@@ -118,8 +114,8 @@ type ShardStatus struct {
 	VectorQueueSize int            `json:"vectorQueueSize"`
 }
 
-func ListShards(c *client.Client, collection string) ([]ShardStatus, error) {
-	raw, err := doGet(c, "/schema/"+url.PathEscape(collection)+"/shards")
+func ListShards(ctx context.Context, c *client.Client, collection string) ([]ShardStatus, error) {
+	raw, err := doGet(ctx, c, "/schema/"+url.PathEscape(collection)+"/shards")
 	if err != nil {
 		return nil, err
 	}
@@ -137,8 +133,8 @@ type Tenant struct {
 	ActivityStatus string `json:"activityStatus"`
 }
 
-func ListTenants(c *client.Client, collection string) ([]Tenant, error) {
-	raw, err := doGet(c, "/schema/"+url.PathEscape(collection)+"/tenants")
+func ListTenants(ctx context.Context, c *client.Client, collection string) ([]Tenant, error) {
+	raw, err := doGet(ctx, c, "/schema/"+url.PathEscape(collection)+"/tenants")
 	if err != nil {
 		return nil, err
 	}
@@ -150,20 +146,20 @@ func ListTenants(c *client.Client, collection string) ([]Tenant, error) {
 }
 
 // CreateTenants creates the given tenants in one request.
-func CreateTenants(c *client.Client, collection string, tenants []Tenant) error {
-	_, err := c.Do(http.MethodPost, "/schema/"+url.PathEscape(collection)+"/tenants", tenants)
+func CreateTenants(ctx context.Context, c *client.Client, collection string, tenants []Tenant) error {
+	_, err := c.Do(ctx, http.MethodPost, "/schema/"+url.PathEscape(collection)+"/tenants", tenants)
 	return err
 }
 
 // UpdateTenants updates activity status for the given tenants.
-func UpdateTenants(c *client.Client, collection string, tenants []Tenant) error {
-	_, err := c.Do(http.MethodPut, "/schema/"+url.PathEscape(collection)+"/tenants", tenants)
+func UpdateTenants(ctx context.Context, c *client.Client, collection string, tenants []Tenant) error {
+	_, err := c.Do(ctx, http.MethodPut, "/schema/"+url.PathEscape(collection)+"/tenants", tenants)
 	return err
 }
 
 // DeleteTenants removes tenants by name.
-func DeleteTenants(c *client.Client, collection string, names []string) error {
-	_, err := c.Do(http.MethodDelete, "/schema/"+url.PathEscape(collection)+"/tenants", names)
+func DeleteTenants(ctx context.Context, c *client.Client, collection string, names []string) error {
+	_, err := c.Do(ctx, http.MethodDelete, "/schema/"+url.PathEscape(collection)+"/tenants", names)
 	return err
 }
 
@@ -174,8 +170,8 @@ type Alias struct {
 	Class string `json:"class"`
 }
 
-func ListAliases(c *client.Client) ([]Alias, error) {
-	raw, err := doGet(c, "/aliases")
+func ListAliases(ctx context.Context, c *client.Client) ([]Alias, error) {
+	raw, err := doGet(ctx, c, "/aliases")
 	if err != nil {
 		return nil, err
 	}
@@ -188,22 +184,22 @@ func ListAliases(c *client.Client) ([]Alias, error) {
 	return out.Aliases, nil
 }
 
-func CreateAlias(c *client.Client, a Alias) error {
-	_, err := c.Do(http.MethodPost, "/aliases", a)
+func CreateAlias(ctx context.Context, c *client.Client, a Alias) error {
+	_, err := c.Do(ctx, http.MethodPost, "/aliases", a)
 	return err
 }
 
 // UpdateAlias retargets an existing alias to another collection.
-func UpdateAlias(c *client.Client, alias, class string) error {
-	_, err := c.Do(http.MethodPut, "/aliases/"+url.PathEscape(alias), map[string]string{"class": class})
+func UpdateAlias(ctx context.Context, c *client.Client, alias, class string) error {
+	_, err := c.Do(ctx, http.MethodPut, "/aliases/"+url.PathEscape(alias), map[string]string{"class": class})
 	return err
 }
 
-func DeleteAlias(c *client.Client, alias string) error {
+func DeleteAlias(ctx context.Context, c *client.Client, alias string) error {
 	if strings.TrimSpace(alias) == "" {
 		return &client.APIError{StatusCode: http.StatusNotFound}
 	}
-	_, err := c.Do(http.MethodDelete, "/aliases/"+url.PathEscape(alias), nil)
+	_, err := c.Do(ctx, http.MethodDelete, "/aliases/"+url.PathEscape(alias), nil)
 	return err
 }
 
@@ -214,8 +210,8 @@ type Role struct {
 	Permissions []map[string]any `json:"permissions"`
 }
 
-func ListRoles(c *client.Client) ([]Role, error) {
-	raw, err := doGet(c, "/authz/roles")
+func ListRoles(ctx context.Context, c *client.Client) ([]Role, error) {
+	raw, err := doGet(ctx, c, "/authz/roles")
 	if err != nil {
 		return nil, err
 	}
@@ -226,11 +222,11 @@ func ListRoles(c *client.Client) ([]Role, error) {
 	return out, nil
 }
 
-func GetRole(c *client.Client, name string) (*Role, error) {
+func GetRole(ctx context.Context, c *client.Client, name string) (*Role, error) {
 	if strings.TrimSpace(name) == "" {
 		return nil, &client.APIError{StatusCode: http.StatusNotFound}
 	}
-	raw, err := doGet(c, "/authz/roles/"+url.PathEscape(name))
+	raw, err := doGet(ctx, c, "/authz/roles/"+url.PathEscape(name))
 	if err != nil {
 		return nil, err
 	}
@@ -241,27 +237,27 @@ func GetRole(c *client.Client, name string) (*Role, error) {
 	return &out, nil
 }
 
-func CreateRole(c *client.Client, r Role) error {
-	_, err := c.Do(http.MethodPost, "/authz/roles", r)
+func CreateRole(ctx context.Context, c *client.Client, r Role) error {
+	_, err := c.Do(ctx, http.MethodPost, "/authz/roles", r)
 	return err
 }
 
-func DeleteRole(c *client.Client, name string) error {
+func DeleteRole(ctx context.Context, c *client.Client, name string) error {
 	if strings.TrimSpace(name) == "" {
 		return &client.APIError{StatusCode: http.StatusNotFound}
 	}
-	_, err := c.Do(http.MethodDelete, "/authz/roles/"+url.PathEscape(name), nil)
+	_, err := c.Do(ctx, http.MethodDelete, "/authz/roles/"+url.PathEscape(name), nil)
 	return err
 }
 
-func AddPermissions(c *client.Client, role string, perms []map[string]any) error {
-	_, err := c.Do(http.MethodPost, "/authz/roles/"+url.PathEscape(role)+"/add-permissions",
+func AddPermissions(ctx context.Context, c *client.Client, role string, perms []map[string]any) error {
+	_, err := c.Do(ctx, http.MethodPost, "/authz/roles/"+url.PathEscape(role)+"/add-permissions",
 		map[string]any{"permissions": perms})
 	return err
 }
 
-func RemovePermissions(c *client.Client, role string, perms []map[string]any) error {
-	_, err := c.Do(http.MethodPost, "/authz/roles/"+url.PathEscape(role)+"/remove-permissions",
+func RemovePermissions(ctx context.Context, c *client.Client, role string, perms []map[string]any) error {
+	_, err := c.Do(ctx, http.MethodPost, "/authz/roles/"+url.PathEscape(role)+"/remove-permissions",
 		map[string]any{"permissions": perms})
 	return err
 }
@@ -278,8 +274,8 @@ type DBUser struct {
 	LastUsedAt         string   `json:"lastUsedAt"`
 }
 
-func ListUsers(c *client.Client) ([]DBUser, error) {
-	raw, err := doGet(c, "/users/db?includeLastUsedTime=true")
+func ListUsers(ctx context.Context, c *client.Client) ([]DBUser, error) {
+	raw, err := doGet(ctx, c, "/users/db?includeLastUsedTime=true")
 	if err != nil {
 		return nil, err
 	}
@@ -290,11 +286,11 @@ func ListUsers(c *client.Client) ([]DBUser, error) {
 	return out, nil
 }
 
-func GetUser(c *client.Client, id string) (*DBUser, error) {
+func GetUser(ctx context.Context, c *client.Client, id string) (*DBUser, error) {
 	if strings.TrimSpace(id) == "" {
 		return nil, &client.APIError{StatusCode: http.StatusNotFound}
 	}
-	raw, err := doGet(c, "/users/db/"+url.PathEscape(id)+"?includeLastUsedTime=true")
+	raw, err := doGet(ctx, c, "/users/db/"+url.PathEscape(id)+"?includeLastUsedTime=true")
 	if err != nil {
 		return nil, err
 	}
@@ -307,8 +303,8 @@ func GetUser(c *client.Client, id string) (*DBUser, error) {
 
 // CreateUser creates a db user; the generated API key is returned exactly
 // once and cannot be retrieved again later.
-func CreateUser(c *client.Client, id string) (apiKey string, err error) {
-	raw, err := c.Do(http.MethodPost, "/users/db/"+url.PathEscape(id), map[string]any{})
+func CreateUser(ctx context.Context, c *client.Client, id string) (apiKey string, err error) {
+	raw, err := c.Do(ctx, http.MethodPost, "/users/db/"+url.PathEscape(id), map[string]any{})
 	if err != nil {
 		return "", err
 	}
@@ -323,11 +319,11 @@ func CreateUser(c *client.Client, id string) (apiKey string, err error) {
 
 // RotateUserKey revokes a db user's current API key and returns the newly
 // generated one exactly once; the old key stops authenticating immediately.
-func RotateUserKey(c *client.Client, id string) (apiKey string, err error) {
+func RotateUserKey(ctx context.Context, c *client.Client, id string) (apiKey string, err error) {
 	if strings.TrimSpace(id) == "" {
 		return "", &client.APIError{StatusCode: http.StatusNotFound}
 	}
-	raw, err := c.Do(http.MethodPost, "/users/db/"+url.PathEscape(id)+"/rotate-key", map[string]any{})
+	raw, err := c.Do(ctx, http.MethodPost, "/users/db/"+url.PathEscape(id)+"/rotate-key", map[string]any{})
 	if err != nil {
 		return "", err
 	}
@@ -340,42 +336,42 @@ func RotateUserKey(c *client.Client, id string) (apiKey string, err error) {
 	return out.APIKey, nil
 }
 
-func DeleteUser(c *client.Client, id string) error {
+func DeleteUser(ctx context.Context, c *client.Client, id string) error {
 	if strings.TrimSpace(id) == "" {
 		return &client.APIError{StatusCode: http.StatusNotFound}
 	}
-	_, err := c.Do(http.MethodDelete, "/users/db/"+url.PathEscape(id), nil)
+	_, err := c.Do(ctx, http.MethodDelete, "/users/db/"+url.PathEscape(id), nil)
 	return err
 }
 
 // ActivateUser re-enables a deactivated db user; DeactivateUser disables
 // one while keeping its API key. The server answers 409 when the user is
 // already in the requested state, which apply treats as "nothing to do".
-func ActivateUser(c *client.Client, id string) error {
+func ActivateUser(ctx context.Context, c *client.Client, id string) error {
 	if strings.TrimSpace(id) == "" {
 		return &client.APIError{StatusCode: http.StatusNotFound}
 	}
-	_, err := c.Do(http.MethodPost, "/users/db/"+url.PathEscape(id)+"/activate", nil)
+	_, err := c.Do(ctx, http.MethodPost, "/users/db/"+url.PathEscape(id)+"/activate", nil)
 	return err
 }
 
-func DeactivateUser(c *client.Client, id string) error {
+func DeactivateUser(ctx context.Context, c *client.Client, id string) error {
 	if strings.TrimSpace(id) == "" {
 		return &client.APIError{StatusCode: http.StatusNotFound}
 	}
-	_, err := c.Do(http.MethodPost, "/users/db/"+url.PathEscape(id)+"/deactivate", nil)
+	_, err := c.Do(ctx, http.MethodPost, "/users/db/"+url.PathEscape(id)+"/deactivate", nil)
 	return err
 }
 
 // AssignRoles grants roles to a user; RevokeRoles removes them.
-func AssignRoles(c *client.Client, userID string, roles []string) error {
-	_, err := c.Do(http.MethodPost, "/authz/users/"+url.PathEscape(userID)+"/assign",
+func AssignRoles(ctx context.Context, c *client.Client, userID string, roles []string) error {
+	_, err := c.Do(ctx, http.MethodPost, "/authz/users/"+url.PathEscape(userID)+"/assign",
 		map[string]any{"roles": roles, "userType": "db"})
 	return err
 }
 
-func RevokeRoles(c *client.Client, userID string, roles []string) error {
-	_, err := c.Do(http.MethodPost, "/authz/users/"+url.PathEscape(userID)+"/revoke",
+func RevokeRoles(ctx context.Context, c *client.Client, userID string, roles []string) error {
+	_, err := c.Do(ctx, http.MethodPost, "/authz/users/"+url.PathEscape(userID)+"/revoke",
 		map[string]any{"roles": roles, "userType": "db"})
 	return err
 }
@@ -391,8 +387,8 @@ type NodeStatus struct {
 	OperationalMode string `json:"operationalMode"`
 }
 
-func ListNodes(c *client.Client) ([]NodeStatus, error) {
-	raw, err := doGet(c, "/nodes")
+func ListNodes(ctx context.Context, c *client.Client) ([]NodeStatus, error) {
+	raw, err := doGet(ctx, c, "/nodes")
 	if err != nil {
 		return nil, err
 	}
@@ -410,8 +406,8 @@ type Meta struct {
 	Version  string `json:"version"`
 }
 
-func GetMeta(c *client.Client) (*Meta, error) {
-	raw, err := doGet(c, "/meta")
+func GetMeta(ctx context.Context, c *client.Client) (*Meta, error) {
+	raw, err := doGet(ctx, c, "/meta")
 	if err != nil {
 		return nil, err
 	}
@@ -445,12 +441,12 @@ func CapitalizeName(name string) string {
 // first-letter-capitalized) matches win; otherwise a unique case-insensitive
 // match is accepted so "mtnews" finds "MTNews". The returned name is the
 // collection's canonical spelling.
-func ResolveCollection(c *client.Client, name string) (string, error) {
+func ResolveCollection(ctx context.Context, c *client.Client, name string) (string, error) {
 	if strings.TrimSpace(name) == "" {
 		return "", &client.APIError{StatusCode: http.StatusNotFound}
 	}
 	try := func(n string) (bool, error) {
-		_, err := GetCollection(c, n)
+		_, err := GetCollection(ctx, c, n)
 		if err == nil {
 			return true, nil
 		}
@@ -468,7 +464,7 @@ func ResolveCollection(c *client.Client, name string) (string, error) {
 			return n, nil
 		}
 	}
-	list, err := ListCollections(c)
+	list, err := ListCollections(ctx, c)
 	if err != nil {
 		return "", err
 	}
@@ -490,11 +486,11 @@ func ResolveCollection(c *client.Client, name string) (string, error) {
 
 // ResolveAlias finds an existing alias by name with the same matching
 // rules as ResolveCollection.
-func ResolveAlias(c *client.Client, name string) (string, error) {
+func ResolveAlias(ctx context.Context, c *client.Client, name string) (string, error) {
 	if strings.TrimSpace(name) == "" {
 		return "", &client.APIError{StatusCode: http.StatusNotFound}
 	}
-	list, err := ListAliases(c)
+	list, err := ListAliases(ctx, c)
 	if err != nil {
 		return "", err
 	}

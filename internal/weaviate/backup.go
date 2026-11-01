@@ -211,8 +211,8 @@ type RestoreStatus struct {
 
 // CreateBackup starts a backup on the backend; the body is the raw API
 // request (see PrepareBackupBody).
-func CreateBackup(c *client.Client, backend string, body map[string]any) (*BackupCreateResponse, error) {
-	raw, err := c.Do(http.MethodPost, "/backups/"+url.PathEscape(backend), body)
+func CreateBackup(ctx context.Context, c *client.Client, backend string, body map[string]any) (*BackupCreateResponse, error) {
+	raw, err := c.Do(ctx, http.MethodPost, "/backups/"+url.PathEscape(backend), body)
 	if err != nil {
 		return nil, err
 	}
@@ -225,8 +225,8 @@ func CreateBackup(c *client.Client, backend string, body map[string]any) (*Backu
 
 // ListBackups returns the backups recorded on a backend, newest first
 // (the server's default ordering).
-func ListBackups(c *client.Client, backend string) ([]BackupListEntry, error) {
-	raw, err := doGet(c, "/backups/"+url.PathEscape(backend))
+func ListBackups(ctx context.Context, c *client.Client, backend string) ([]BackupListEntry, error) {
+	raw, err := doGet(ctx, c, "/backups/"+url.PathEscape(backend))
 	if err != nil {
 		return nil, err
 	}
@@ -237,10 +237,9 @@ func ListBackups(c *client.Client, backend string) ([]BackupListEntry, error) {
 	return out, nil
 }
 
-// GetBackupStatus reports the creation status of one backup. ctx may
-// cancel the request (the --wait poll loop passes the command context).
+// GetBackupStatus reports the creation status of one backup.
 func GetBackupStatus(ctx context.Context, c *client.Client, backend, id string, q StatusQuery) (*BackupStatus, error) {
-	raw, err := doGetContext(ctx, c, "/backups/"+url.PathEscape(backend)+"/"+url.PathEscape(id)+q.query())
+	raw, err := doGet(ctx, c, "/backups/"+url.PathEscape(backend)+"/"+url.PathEscape(id)+q.query())
 	if err != nil {
 		return nil, err
 	}
@@ -252,15 +251,15 @@ func GetBackupStatus(ctx context.Context, c *client.Client, backend, id string, 
 }
 
 // CancelBackup cancels an in-progress backup.
-func CancelBackup(c *client.Client, backend, id string, q StatusQuery) error {
-	_, err := c.Do(http.MethodDelete, "/backups/"+url.PathEscape(backend)+"/"+url.PathEscape(id)+q.query(), nil)
+func CancelBackup(ctx context.Context, c *client.Client, backend, id string, q StatusQuery) error {
+	_, err := c.Do(ctx, http.MethodDelete, "/backups/"+url.PathEscape(backend)+"/"+url.PathEscape(id)+q.query(), nil)
 	return err
 }
 
 // RestoreBackup starts restoring a backup; the body is the raw API request
 // (see PrepareRestoreBody).
-func RestoreBackup(c *client.Client, backend, id string, body map[string]any) (*RestoreResponse, error) {
-	raw, err := c.Do(http.MethodPost, "/backups/"+url.PathEscape(backend)+"/"+url.PathEscape(id)+"/restore", body)
+func RestoreBackup(ctx context.Context, c *client.Client, backend, id string, body map[string]any) (*RestoreResponse, error) {
+	raw, err := c.Do(ctx, http.MethodPost, "/backups/"+url.PathEscape(backend)+"/"+url.PathEscape(id)+"/restore", body)
 	if err != nil {
 		return nil, err
 	}
@@ -271,10 +270,9 @@ func RestoreBackup(c *client.Client, backend, id string, body map[string]any) (*
 	return &out, nil
 }
 
-// GetRestoreStatus reports the status of a restore attempt. ctx may
-// cancel the request (the --wait poll loop passes the command context).
+// GetRestoreStatus reports the status of a restore attempt.
 func GetRestoreStatus(ctx context.Context, c *client.Client, backend, id string, q StatusQuery) (*RestoreStatus, error) {
-	raw, err := doGetContext(ctx, c, "/backups/"+url.PathEscape(backend)+"/"+url.PathEscape(id)+"/restore"+q.query())
+	raw, err := doGet(ctx, c, "/backups/"+url.PathEscape(backend)+"/"+url.PathEscape(id)+"/restore"+q.query())
 	if err != nil {
 		return nil, err
 	}
@@ -286,7 +284,7 @@ func GetRestoreStatus(ctx context.Context, c *client.Client, backend, id string,
 }
 
 // CancelRestore cancels an in-progress restore.
-func CancelRestore(c *client.Client, backend, id string, q StatusQuery) error {
-	_, err := c.Do(http.MethodDelete, "/backups/"+url.PathEscape(backend)+"/"+url.PathEscape(id)+"/restore"+q.query(), nil)
+func CancelRestore(ctx context.Context, c *client.Client, backend, id string, q StatusQuery) error {
+	_, err := c.Do(ctx, http.MethodDelete, "/backups/"+url.PathEscape(backend)+"/"+url.PathEscape(id)+"/restore"+q.query(), nil)
 	return err
 }

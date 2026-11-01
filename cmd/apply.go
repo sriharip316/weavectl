@@ -43,7 +43,7 @@ apply may issue several API calls, handled automatically:
 			if err != nil {
 				return err
 			}
-			results, err := apply.Apply(c, docs)
+			results, err := apply.Apply(cmd.Context(), c, docs)
 			if len(results) > 0 {
 				printResults(cmd, results)
 			}

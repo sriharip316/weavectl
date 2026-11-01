@@ -58,23 +58,24 @@ func outputFlag(cmd *cobra.Command) string {
 }
 
 func runGet(cmd *cobra.Command, c *client.Client, typ, name string, format printer.Format) error {
+	ctx := cmd.Context()
 	out := cmd.OutOrStdout()
 	single := name != ""
 
 	switch typ {
 	case "collections":
 		if single {
-			resolved, err := weaviate.ResolveCollection(c, name)
+			resolved, err := weaviate.ResolveCollection(ctx, c, name)
 			if err != nil {
 				return notFoundWrap(err, "collection", name)
 			}
-			obj, err := weaviate.GetCollection(c, resolved)
+			obj, err := weaviate.GetCollection(ctx, c, resolved)
 			if err != nil {
 				return notFoundWrap(err, "collection", name)
 			}
 			return printObjects(out, format, true, []any{obj}, collectionHeaders, collectionRow(obj))
 		}
-		list, err := weaviate.ListCollections(c)
+		list, err := weaviate.ListCollections(ctx, c)
 		if err != nil {
 			return err
 		}
@@ -91,13 +92,13 @@ func runGet(cmd *cobra.Command, c *client.Client, typ, name string, format print
 
 	case "roles":
 		if single {
-			obj, err := weaviate.GetRole(c, name)
+			obj, err := weaviate.GetRole(ctx, c, name)
 			if err != nil {
 				return notFoundWrap(err, "role", name)
 			}
 			return printObjects(out, format, true, []any{obj}, roleHeaders, roleRow(*obj))
 		}
-		list, err := weaviate.ListRoles(c)
+		list, err := weaviate.ListRoles(ctx, c)
 		if err != nil {
 			return err
 		}
@@ -112,13 +113,13 @@ func runGet(cmd *cobra.Command, c *client.Client, typ, name string, format print
 
 	case "users":
 		if single {
-			obj, err := weaviate.GetUser(c, name)
+			obj, err := weaviate.GetUser(ctx, c, name)
 			if err != nil {
 				return notFoundWrap(err, "user", name)
 			}
 			return printObjects(out, format, true, []any{obj}, userHeaders, userRow(*obj))
 		}
-		list, err := weaviate.ListUsers(c)
+		list, err := weaviate.ListUsers(ctx, c)
 		if err != nil {
 			return err
 		}
@@ -132,12 +133,12 @@ func runGet(cmd *cobra.Command, c *client.Client, typ, name string, format print
 		return printObjects(out, format, false, items, userHeaders, rows...)
 
 	case "aliases":
-		list, err := weaviate.ListAliases(c)
+		list, err := weaviate.ListAliases(ctx, c)
 		if err != nil {
 			return err
 		}
 		if single {
-			resolved, err := weaviate.ResolveAlias(c, name)
+			resolved, err := weaviate.ResolveAlias(ctx, c, name)
 			if err != nil {
 				return notFoundWrap(err, "alias", name)
 			}
@@ -162,11 +163,11 @@ func runGet(cmd *cobra.Command, c *client.Client, typ, name string, format print
 		if !single {
 			return fmt.Errorf("get tenants requires a collection name (weavectl get tenants COLLECTION)")
 		}
-		resolved, err := weaviate.ResolveCollection(c, name)
+		resolved, err := weaviate.ResolveCollection(ctx, c, name)
 		if err != nil {
 			return notFoundWrap(err, "collection", name)
 		}
-		list, err := weaviate.ListTenants(c, resolved)
+		list, err := weaviate.ListTenants(ctx, c, resolved)
 		if err != nil {
 			return err
 		}
@@ -183,11 +184,11 @@ func runGet(cmd *cobra.Command, c *client.Client, typ, name string, format print
 		if !single {
 			return fmt.Errorf("get shards requires a collection name (weavectl get shards COLLECTION)")
 		}
-		resolved, err := weaviate.ResolveCollection(c, name)
+		resolved, err := weaviate.ResolveCollection(ctx, c, name)
 		if err != nil {
 			return notFoundWrap(err, "collection", name)
 		}
-		list, err := weaviate.ListShards(c, resolved)
+		list, err := weaviate.ListShards(ctx, c, resolved)
 		if err != nil {
 			return err
 		}
@@ -204,7 +205,7 @@ func runGet(cmd *cobra.Command, c *client.Client, typ, name string, format print
 		if single {
 			return fmt.Errorf("get nodes takes no name argument")
 		}
-		list, err := weaviate.ListNodes(c)
+		list, err := weaviate.ListNodes(ctx, c)
 		if err != nil {
 			return err
 		}
@@ -227,13 +228,13 @@ func runGet(cmd *cobra.Command, c *client.Client, typ, name string, format print
 		}
 		backend = weaviate.NormalizeBackend(backend)
 		if single {
-			st, err := weaviate.GetBackupStatus(cmd.Context(), c, backend, name, statusQueryFromFlags(cmd))
+			st, err := weaviate.GetBackupStatus(ctx, c, backend, name, statusQueryFromFlags(cmd))
 			if err != nil {
 				return notFoundWrap(err, "backup", backend+"/"+name)
 			}
 			return printObjects(out, format, true, []any{st}, backupStatusHeaders, backupStatusRow(*st))
 		}
-		list, err := weaviate.ListBackups(c, backend)
+		list, err := weaviate.ListBackups(ctx, c, backend)
 		if err != nil {
 			return err
 		}

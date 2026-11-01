@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -47,28 +48,28 @@ No confirmation prompts; deleting a collection deletes all its data.`,
 	cmd.Flags().StringP("filename", "f", "", "manifest file (\"-\" for stdin)")
 	cmd.AddCommand(
 		newDeleteTypedCommand("collection", "Delete a collection and all its data",
-			func(c *client.Client, name string) (string, error) {
-				resolved, err := weaviate.ResolveCollection(c, name)
+			func(ctx context.Context, c *client.Client, name string) (string, error) {
+				resolved, err := weaviate.ResolveCollection(ctx, c, name)
 				if err != nil {
 					return "", err
 				}
-				return resolved, weaviate.DeleteCollection(c, resolved)
+				return resolved, weaviate.DeleteCollection(ctx, c, resolved)
 			}),
 		newDeleteTypedCommand("role", "Delete an authorization role",
-			func(c *client.Client, name string) (string, error) {
-				return name, weaviate.DeleteRole(c, name)
+			func(ctx context.Context, c *client.Client, name string) (string, error) {
+				return name, weaviate.DeleteRole(ctx, c, name)
 			}),
 		newDeleteTypedCommand("user", "Delete a db user",
-			func(c *client.Client, name string) (string, error) {
-				return name, weaviate.DeleteUser(c, name)
+			func(ctx context.Context, c *client.Client, name string) (string, error) {
+				return name, weaviate.DeleteUser(ctx, c, name)
 			}),
 		newDeleteTypedCommand("alias", "Delete an alias",
-			func(c *client.Client, name string) (string, error) {
-				resolved, err := weaviate.ResolveAlias(c, name)
+			func(ctx context.Context, c *client.Client, name string) (string, error) {
+				resolved, err := weaviate.ResolveAlias(ctx, c, name)
 				if err != nil {
 					return "", err
 				}
-				return resolved, weaviate.DeleteAlias(c, resolved)
+				return resolved, weaviate.DeleteAlias(ctx, c, resolved)
 			}),
 		newDeleteTenantCommand(),
 		newDeleteBackupCommand(),
@@ -76,7 +77,7 @@ No confirmation prompts; deleting a collection deletes all its data.`,
 	return cmd
 }
 
-func newDeleteTypedCommand(kind, short string, del func(*client.Client, string) (string, error)) *cobra.Command {
+func newDeleteTypedCommand(kind, short string, del func(context.Context, *client.Client, string) (string, error)) *cobra.Command {
 	return &cobra.Command{
 		Use:     fmt.Sprintf("%s NAME", kind),
 		Short:   short,
@@ -87,7 +88,7 @@ func newDeleteTypedCommand(kind, short string, del func(*client.Client, string) 
 			if err != nil {
 				return err
 			}
-			resolvedName, err := del(c, args[0])
+			resolvedName, err := del(cmd.Context(), c, args[0])
 			if err != nil {
 				return notFoundWrap(err, kind, args[0])
 			}
@@ -107,11 +108,11 @@ func newDeleteTenantCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			collection, err := weaviate.ResolveCollection(c, args[0])
+			collection, err := weaviate.ResolveCollection(cmd.Context(), c, args[0])
 			if err != nil {
 				return notFoundWrap(err, "collection", args[0])
 			}
-			if err := weaviate.DeleteTenants(c, collection, args[1:]); err != nil {
+			if err := weaviate.DeleteTenants(cmd.Context(), c, collection, args[1:]); err != nil {
 				return notFoundWrap(err, "collection", collection)
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "tenant %q deleted: %s\n", collection, join(args[1:]))
@@ -121,33 +122,34 @@ func newDeleteTenantCommand() *cobra.Command {
 }
 
 func deleteDoc(cmd *cobra.Command, c *client.Client, doc manifest.Document) error {
+	ctx := cmd.Context()
 	out := cmd.OutOrStdout()
 	switch doc.Kind {
 	case manifest.KindCollection:
-		resolved, err := weaviate.ResolveCollection(c, doc.Name)
+		resolved, err := weaviate.ResolveCollection(ctx, c, doc.Name)
 		if err != nil {
 			return notFoundWrap(err, "collection", doc.Name)
 		}
-		if err := notFoundWrap(weaviate.DeleteCollection(c, resolved), "collection", resolved); err != nil {
+		if err := notFoundWrap(weaviate.DeleteCollection(ctx, c, resolved), "collection", resolved); err != nil {
 			return err
 		}
 		_, _ = fmt.Fprintf(out, "collection %q deleted\n", resolved)
 	case manifest.KindRole:
-		if err := notFoundWrap(weaviate.DeleteRole(c, doc.Name), "role", doc.Name); err != nil {
+		if err := notFoundWrap(weaviate.DeleteRole(ctx, c, doc.Name), "role", doc.Name); err != nil {
 			return err
 		}
 		_, _ = fmt.Fprintf(out, "role %q deleted\n", doc.Name)
 	case manifest.KindUser:
-		if err := notFoundWrap(weaviate.DeleteUser(c, doc.Name), "user", doc.Name); err != nil {
+		if err := notFoundWrap(weaviate.DeleteUser(ctx, c, doc.Name), "user", doc.Name); err != nil {
 			return err
 		}
 		_, _ = fmt.Fprintf(out, "user %q deleted\n", doc.Name)
 	case manifest.KindAlias:
-		resolved, err := weaviate.ResolveAlias(c, doc.Name)
+		resolved, err := weaviate.ResolveAlias(ctx, c, doc.Name)
 		if err != nil {
 			return notFoundWrap(err, "alias", doc.Name)
 		}
-		if err := notFoundWrap(weaviate.DeleteAlias(c, resolved), "alias", resolved); err != nil {
+		if err := notFoundWrap(weaviate.DeleteAlias(ctx, c, resolved), "alias", resolved); err != nil {
 			return err
 		}
 		_, _ = fmt.Fprintf(out, "alias %q deleted\n", resolved)
@@ -160,23 +162,23 @@ func deleteDoc(cmd *cobra.Command, c *client.Client, doc manifest.Document) erro
 		for _, t := range td.Tenants {
 			names = append(names, str(t["name"]))
 		}
-		collection, err := weaviate.ResolveCollection(c, td.Collection)
+		collection, err := weaviate.ResolveCollection(ctx, c, td.Collection)
 		if err != nil {
 			return notFoundWrap(err, "collection", td.Collection)
 		}
-		if err := notFoundWrap(weaviate.DeleteTenants(c, collection, names), "collection", collection); err != nil {
+		if err := notFoundWrap(weaviate.DeleteTenants(ctx, c, collection, names), "collection", collection); err != nil {
 			return err
 		}
 		_, _ = fmt.Fprintf(out, "tenant %q deleted: %s\n", collection, join(names))
 	case manifest.KindBackup:
 		name := weaviate.NormalizeBackend(doc.Backend()) + "/" + doc.BackupID()
-		if err := notFoundWrap(weaviate.CancelBackup(c, doc.Backend(), doc.BackupID(), weaviate.StatusQueryFromManifest(doc.Object)), "backup", name); err != nil {
+		if err := notFoundWrap(weaviate.CancelBackup(ctx, c, doc.Backend(), doc.BackupID(), weaviate.StatusQueryFromManifest(doc.Object)), "backup", name); err != nil {
 			return err
 		}
 		_, _ = fmt.Fprintf(out, "backup %q canceled\n", name)
 	case manifest.KindRestore:
 		name := weaviate.NormalizeBackend(doc.Backend()) + "/" + doc.BackupID()
-		if err := notFoundWrap(weaviate.CancelRestore(c, doc.Backend(), doc.BackupID(), weaviate.StatusQueryFromManifest(doc.Object)), "restore", name); err != nil {
+		if err := notFoundWrap(weaviate.CancelRestore(ctx, c, doc.Backend(), doc.BackupID(), weaviate.StatusQueryFromManifest(doc.Object)), "restore", name); err != nil {
 			return err
 		}
 		_, _ = fmt.Fprintf(out, "restore %q canceled\n", name)

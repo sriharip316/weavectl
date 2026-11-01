@@ -94,7 +94,7 @@ func createFromDocs(cmd *cobra.Command, c *client.Client, docs []manifest.Docume
 			}
 		}
 
-		if err := ensureAbsent(c, doc, declaredCollections); err != nil {
+		if err := ensureAbsent(cmd.Context(), c, doc, declaredCollections); err != nil {
 			return err
 		}
 
@@ -102,7 +102,7 @@ func createFromDocs(cmd *cobra.Command, c *client.Client, docs []manifest.Docume
 			declaredCollections[weaviate.CapitalizeName(doc.Name)] = true
 		}
 	}
-	results, err := apply.Apply(c, docs)
+	results, err := apply.Apply(cmd.Context(), c, docs)
 	if len(results) > 0 {
 		printResults(cmd, results)
 	}
@@ -132,8 +132,8 @@ func docIdentity(doc manifest.Document) string {
 }
 
 // ensureAbsent turns apply's upsert into create's insert-only semantics.
-func ensureAbsent(c *client.Client, doc manifest.Document, declaredCollections map[string]bool) error {
-	exists, err := objectExists(c, doc, declaredCollections)
+func ensureAbsent(ctx context.Context, c *client.Client, doc manifest.Document, declaredCollections map[string]bool) error {
+	exists, err := objectExists(ctx, c, doc, declaredCollections)
 	if err != nil {
 		return err
 	}
@@ -143,19 +143,19 @@ func ensureAbsent(c *client.Client, doc manifest.Document, declaredCollections m
 	return nil
 }
 
-func objectExists(c *client.Client, doc manifest.Document, declaredCollections map[string]bool) (bool, error) {
+func objectExists(ctx context.Context, c *client.Client, doc manifest.Document, declaredCollections map[string]bool) (bool, error) {
 	switch doc.Kind {
 	case manifest.KindCollection:
-		_, err := weaviate.ResolveCollection(c, doc.Name)
+		_, err := weaviate.ResolveCollection(ctx, c, doc.Name)
 		return !client.IsNotFound(err), errUnlessNotFound(err)
 	case manifest.KindRole:
-		_, err := weaviate.GetRole(c, doc.Name)
+		_, err := weaviate.GetRole(ctx, c, doc.Name)
 		return !client.IsNotFound(err), errUnlessNotFound(err)
 	case manifest.KindUser:
-		_, err := weaviate.GetUser(c, doc.Name)
+		_, err := weaviate.GetUser(ctx, c, doc.Name)
 		return !client.IsNotFound(err), errUnlessNotFound(err)
 	case manifest.KindAlias:
-		_, err := weaviate.ResolveAlias(c, doc.Name)
+		_, err := weaviate.ResolveAlias(ctx, c, doc.Name)
 		return !client.IsNotFound(err), errUnlessNotFound(err)
 	case manifest.KindTenants:
 		td, err := doc.TenantsDoc()
@@ -166,11 +166,11 @@ func objectExists(c *client.Client, doc manifest.Document, declaredCollections m
 		if declaredCollections != nil && declaredCollections[colName] {
 			return false, nil
 		}
-		collection, err := weaviate.ResolveCollection(c, td.Collection)
+		collection, err := weaviate.ResolveCollection(ctx, c, td.Collection)
 		if err != nil {
 			return false, err
 		}
-		current, err := weaviate.ListTenants(c, collection)
+		current, err := weaviate.ListTenants(ctx, c, collection)
 		if err != nil {
 			return false, err
 		}
@@ -185,10 +185,10 @@ func objectExists(c *client.Client, doc manifest.Document, declaredCollections m
 		}
 		return false, nil
 	case manifest.KindBackup:
-		_, err := weaviate.GetBackupStatus(context.Background(), c, doc.Backend(), doc.BackupID(), weaviate.StatusQueryFromManifest(doc.Object))
+		_, err := weaviate.GetBackupStatus(ctx, c, doc.Backend(), doc.BackupID(), weaviate.StatusQueryFromManifest(doc.Object))
 		return !client.IsNotFound(err), errUnlessNotFound(err)
 	case manifest.KindRestore:
-		_, err := weaviate.GetRestoreStatus(context.Background(), c, doc.Backend(), doc.BackupID(), weaviate.StatusQueryFromManifest(doc.Object))
+		_, err := weaviate.GetRestoreStatus(ctx, c, doc.Backend(), doc.BackupID(), weaviate.StatusQueryFromManifest(doc.Object))
 		return !client.IsNotFound(err), errUnlessNotFound(err)
 	}
 	return false, fmt.Errorf("unsupported kind %q", doc.Kind)
@@ -228,7 +228,7 @@ func newCreateCollectionCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if _, err := weaviate.CreateCollection(c, body); err != nil {
+			if _, err := weaviate.CreateCollection(cmd.Context(), c, body); err != nil {
 				return err
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "collection/%s created\n", name)
@@ -253,7 +253,7 @@ func newCreateUserCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			apiKey, err := weaviate.CreateUser(c, args[0])
+			apiKey, err := weaviate.CreateUser(cmd.Context(), c, args[0])
 			if err != nil {
 				return err
 			}
@@ -279,7 +279,7 @@ func newCreateAliasCommand() *cobra.Command {
 				return err
 			}
 			name := weaviate.CapitalizeName(args[0])
-			if err := weaviate.CreateAlias(c, weaviate.Alias{
+			if err := weaviate.CreateAlias(cmd.Context(), c, weaviate.Alias{
 				Alias: name, Class: weaviate.CapitalizeName(target),
 			}); err != nil {
 				return err
@@ -304,7 +304,7 @@ func newCreateTenantCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			collection, err := weaviate.ResolveCollection(c, args[0])
+			collection, err := weaviate.ResolveCollection(cmd.Context(), c, args[0])
 			if err != nil {
 				return notFoundWrap(err, "collection", args[0])
 			}
@@ -312,7 +312,7 @@ func newCreateTenantCommand() *cobra.Command {
 			for _, n := range args[1:] {
 				tenants = append(tenants, weaviate.Tenant{Name: n, ActivityStatus: status})
 			}
-			if err := weaviate.CreateTenants(c, collection, tenants); err != nil {
+			if err := weaviate.CreateTenants(cmd.Context(), c, collection, tenants); err != nil {
 				return err
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "tenant/%s created: %s\n", collection, join(args[1:]))

@@ -45,7 +45,7 @@ or CANCELED and exits non-zero on failure.
 			if err != nil {
 				return err
 			}
-			resp, err := weaviate.RestoreBackup(c, backend, id, body)
+			resp, err := weaviate.RestoreBackup(cmd.Context(), c, backend, id, body)
 			if err != nil {
 				return notFoundWrap(err, "backup", backend+"/"+id)
 			}
@@ -126,7 +126,7 @@ func newRestoreCancelCommand() *cobra.Command {
 				return err
 			}
 			backend := weaviate.NormalizeBackend(args[0])
-			if err := weaviate.CancelRestore(c, backend, args[1], statusQueryFromFlags(cmd)); err != nil {
+			if err := weaviate.CancelRestore(cmd.Context(), c, backend, args[1], statusQueryFromFlags(cmd)); err != nil {
 				return notFoundWrap(err, "restore", backend+"/"+args[1])
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "restore %q canceled\n", backend+"/"+args[1])

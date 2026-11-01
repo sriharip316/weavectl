@@ -20,7 +20,7 @@ func newVersionCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			meta, err := weaviate.GetMeta(c)
+			meta, err := weaviate.GetMeta(cmd.Context(), c)
 			if err != nil {
 				return err
 			}

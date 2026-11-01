@@ -155,9 +155,8 @@ func setupSignalHandlerWith(sigCh chan os.Signal, exit func(int)) (context.Conte
 }
 
 // Execute runs the root command with a signal-aware context: the first
-// SIGINT/SIGTERM cancels the context (so context-aware work like
-// `backup --wait` stops gracefully), the second one exits hard in case a
-// command ignores cancellation.
+// SIGINT/SIGTERM cancels the context, aborting in-flight requests and wait
+// loops, and the second one exits hard if the process is stuck.
 func Execute() {
 	ctx, cleanup := setupSignalHandler()
 	defer cleanup()

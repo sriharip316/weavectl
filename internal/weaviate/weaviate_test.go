@@ -1,6 +1,7 @@
 package weaviate
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -83,51 +84,51 @@ func TestCollectionsEndpoints(t *testing.T) {
 	defer cleanup()
 
 	// ListCollections
-	list, err := ListCollections(c)
+	list, err := ListCollections(context.Background(), c)
 	if err != nil || len(list) != 2 {
 		t.Fatalf("ListCollections: %v (len=%d)", err, len(list))
 	}
 
 	// GetCollection
-	col, err := GetCollection(c, "Articles")
+	col, err := GetCollection(context.Background(), c, "Articles")
 	if err != nil || col["class"] != "Articles" {
 		t.Fatalf("GetCollection: %v (%v)", err, col)
 	}
 
 	// GetCollection empty string must return NotFound
-	if _, err := GetCollection(c, ""); !client.IsNotFound(err) {
+	if _, err := GetCollection(context.Background(), c, ""); !client.IsNotFound(err) {
 		t.Fatalf("GetCollection('') expected NotFound, got %v", err)
 	}
 
 	// CreateCollection
-	created, err := CreateCollection(c, map[string]any{"class": "TestCol"})
+	created, err := CreateCollection(context.Background(), c, map[string]any{"class": "TestCol"})
 	if err != nil || created["class"] != "TestCol" {
 		t.Fatalf("CreateCollection: %v (%v)", err, created)
 	}
 
 	// UpdateCollection
-	updated, err := UpdateCollection(c, "Articles", map[string]any{"class": "Articles"})
+	updated, err := UpdateCollection(context.Background(), c, "Articles", map[string]any{"class": "Articles"})
 	if err != nil || updated["class"] != "Articles" {
 		t.Fatalf("UpdateCollection: %v (%v)", err, updated)
 	}
 
 	// UpdateCollection empty
-	if _, err := UpdateCollection(c, "", map[string]any{}); !client.IsNotFound(err) {
+	if _, err := UpdateCollection(context.Background(), c, "", map[string]any{}); !client.IsNotFound(err) {
 		t.Fatalf("UpdateCollection('') expected NotFound, got %v", err)
 	}
 
 	// DeleteCollection
-	if err := DeleteCollection(c, "Articles"); err != nil {
+	if err := DeleteCollection(context.Background(), c, "Articles"); err != nil {
 		t.Fatalf("DeleteCollection: %v", err)
 	}
 
 	// DeleteCollection empty
-	if err := DeleteCollection(c, ""); !client.IsNotFound(err) {
+	if err := DeleteCollection(context.Background(), c, ""); !client.IsNotFound(err) {
 		t.Fatalf("DeleteCollection('') expected NotFound, got %v", err)
 	}
 
 	// AddProperty
-	if err := AddProperty(c, "Articles", map[string]any{"name": "author", "dataType": []string{"text"}}); err != nil {
+	if err := AddProperty(context.Background(), c, "Articles", map[string]any{"name": "author", "dataType": []string{"text"}}); err != nil {
 		t.Fatalf("AddProperty: %v", err)
 	}
 }
@@ -157,35 +158,35 @@ func TestResolveCollection(t *testing.T) {
 	defer cleanup()
 
 	// Empty string must return NotFound
-	if _, err := ResolveCollection(c, ""); !client.IsNotFound(err) {
+	if _, err := ResolveCollection(context.Background(), c, ""); !client.IsNotFound(err) {
 		t.Fatalf("ResolveCollection('') expected NotFound, got %v", err)
 	}
 
 	// Exact match
-	name, err := ResolveCollection(c, "Articles")
+	name, err := ResolveCollection(context.Background(), c, "Articles")
 	if err != nil || name != "Articles" {
 		t.Fatalf("ResolveCollection('Articles') = %q, %v", name, err)
 	}
 
 	// CapitalizeName match (articles -> Articles)
-	name, err = ResolveCollection(c, "articles")
+	name, err = ResolveCollection(context.Background(), c, "articles")
 	if err != nil || name != "Articles" {
 		t.Fatalf("ResolveCollection('articles') = %q, %v", name, err)
 	}
 
 	// Case-insensitive match (mtnews -> MTNews)
-	name, err = ResolveCollection(c, "mtnews")
+	name, err = ResolveCollection(context.Background(), c, "mtnews")
 	if err != nil || name != "MTNews" {
 		t.Fatalf("ResolveCollection('mtnews') = %q, %v", name, err)
 	}
 
 	// Not found
-	if _, err := ResolveCollection(c, "absent"); !client.IsNotFound(err) {
+	if _, err := ResolveCollection(context.Background(), c, "absent"); !client.IsNotFound(err) {
 		t.Fatalf("ResolveCollection('absent') expected NotFound, got %v", err)
 	}
 
 	// Ambiguous match
-	if _, err := ResolveCollection(c, "dupe1"); err == nil {
+	if _, err := ResolveCollection(context.Background(), c, "dupe1"); err == nil {
 		t.Fatalf("ResolveCollection('dupe1') expected ambiguity error, got nil")
 	}
 }
@@ -207,29 +208,29 @@ func TestResolveAlias(t *testing.T) {
 	defer cleanup()
 
 	// Empty string
-	if _, err := ResolveAlias(c, ""); !client.IsNotFound(err) {
+	if _, err := ResolveAlias(context.Background(), c, ""); !client.IsNotFound(err) {
 		t.Fatalf("ResolveAlias('') expected NotFound, got %v", err)
 	}
 
 	// Exact / CapitalizeName
-	alias, err := ResolveAlias(c, "news")
+	alias, err := ResolveAlias(context.Background(), c, "news")
 	if err != nil || alias != "News" {
 		t.Fatalf("ResolveAlias('news') = %q, %v", alias, err)
 	}
 
 	// Case-insensitive
-	alias, err = ResolveAlias(c, "mt_alias")
+	alias, err = ResolveAlias(context.Background(), c, "mt_alias")
 	if err != nil || alias != "MT_Alias" {
 		t.Fatalf("ResolveAlias('mt_alias') = %q, %v", alias, err)
 	}
 
 	// Not found
-	if _, err := ResolveAlias(c, "nonexistent"); !client.IsNotFound(err) {
+	if _, err := ResolveAlias(context.Background(), c, "nonexistent"); !client.IsNotFound(err) {
 		t.Fatalf("ResolveAlias('nonexistent') expected NotFound, got %v", err)
 	}
 
 	// Ambiguous
-	if _, err := ResolveAlias(c, "AMB1"); err == nil {
+	if _, err := ResolveAlias(context.Background(), c, "AMB1"); err == nil {
 		t.Fatalf("ResolveAlias('AMB1') expected error, got nil")
 	}
 }
@@ -260,24 +261,24 @@ func TestShardsAndTenants(t *testing.T) {
 	defer cleanup()
 
 	// Shards
-	shards, err := ListShards(c, "Articles")
+	shards, err := ListShards(context.Background(), c, "Articles")
 	if err != nil || len(shards) != 1 || shards[0].Name != "shard-1" {
 		t.Fatalf("ListShards: %v (%v)", err, shards)
 	}
 
 	// Tenants
-	tenants, err := ListTenants(c, "Articles")
+	tenants, err := ListTenants(context.Background(), c, "Articles")
 	if err != nil || len(tenants) != 1 || tenants[0].Name != "t1" {
 		t.Fatalf("ListTenants: %v (%v)", err, tenants)
 	}
 
-	if err := CreateTenants(c, "Articles", []Tenant{{Name: "t2", ActivityStatus: "ACTIVE"}}); err != nil {
+	if err := CreateTenants(context.Background(), c, "Articles", []Tenant{{Name: "t2", ActivityStatus: "ACTIVE"}}); err != nil {
 		t.Fatalf("CreateTenants: %v", err)
 	}
-	if err := UpdateTenants(c, "Articles", []Tenant{{Name: "t1", ActivityStatus: "COLD"}}); err != nil {
+	if err := UpdateTenants(context.Background(), c, "Articles", []Tenant{{Name: "t1", ActivityStatus: "COLD"}}); err != nil {
 		t.Fatalf("UpdateTenants: %v", err)
 	}
-	if err := DeleteTenants(c, "Articles", []string{"t1"}); err != nil {
+	if err := DeleteTenants(context.Background(), c, "Articles", []string{"t1"}); err != nil {
 		t.Fatalf("DeleteTenants: %v", err)
 	}
 }
@@ -304,20 +305,20 @@ func TestAliasesEndpoints(t *testing.T) {
 	c, cleanup := newTestClient(mux)
 	defer cleanup()
 
-	aliases, err := ListAliases(c)
+	aliases, err := ListAliases(context.Background(), c)
 	if err != nil || len(aliases) != 1 {
 		t.Fatalf("ListAliases: %v", err)
 	}
-	if err := CreateAlias(c, Alias{Alias: "A2", Class: "Articles"}); err != nil {
+	if err := CreateAlias(context.Background(), c, Alias{Alias: "A2", Class: "Articles"}); err != nil {
 		t.Fatalf("CreateAlias: %v", err)
 	}
-	if err := UpdateAlias(c, "News", "MTNews"); err != nil {
+	if err := UpdateAlias(context.Background(), c, "News", "MTNews"); err != nil {
 		t.Fatalf("UpdateAlias: %v", err)
 	}
-	if err := DeleteAlias(c, "News"); err != nil {
+	if err := DeleteAlias(context.Background(), c, "News"); err != nil {
 		t.Fatalf("DeleteAlias: %v", err)
 	}
-	if err := DeleteAlias(c, ""); !client.IsNotFound(err) {
+	if err := DeleteAlias(context.Background(), c, ""); !client.IsNotFound(err) {
 		t.Fatalf("DeleteAlias('') expected NotFound, got %v", err)
 	}
 }
@@ -353,30 +354,30 @@ func TestRolesEndpoints(t *testing.T) {
 	c, cleanup := newTestClient(mux)
 	defer cleanup()
 
-	roles, err := ListRoles(c)
+	roles, err := ListRoles(context.Background(), c)
 	if err != nil || len(roles) != 1 {
 		t.Fatalf("ListRoles: %v", err)
 	}
-	role, err := GetRole(c, "admin")
+	role, err := GetRole(context.Background(), c, "admin")
 	if err != nil || role.Name != "admin" {
 		t.Fatalf("GetRole: %v (%v)", err, role)
 	}
-	if _, err := GetRole(c, ""); !client.IsNotFound(err) {
+	if _, err := GetRole(context.Background(), c, ""); !client.IsNotFound(err) {
 		t.Fatalf("GetRole('') expected NotFound, got %v", err)
 	}
-	if err := CreateRole(c, Role{Name: "editor"}); err != nil {
+	if err := CreateRole(context.Background(), c, Role{Name: "editor"}); err != nil {
 		t.Fatalf("CreateRole: %v", err)
 	}
-	if err := DeleteRole(c, "editor"); err != nil {
+	if err := DeleteRole(context.Background(), c, "editor"); err != nil {
 		t.Fatalf("DeleteRole: %v", err)
 	}
-	if err := DeleteRole(c, ""); !client.IsNotFound(err) {
+	if err := DeleteRole(context.Background(), c, ""); !client.IsNotFound(err) {
 		t.Fatalf("DeleteRole('') expected NotFound, got %v", err)
 	}
-	if err := AddPermissions(c, "admin", []map[string]any{{"action": "read_data"}}); err != nil {
+	if err := AddPermissions(context.Background(), c, "admin", []map[string]any{{"action": "read_data"}}); err != nil {
 		t.Fatalf("AddPermissions: %v", err)
 	}
-	if err := RemovePermissions(c, "admin", []map[string]any{{"action": "read_data"}}); err != nil {
+	if err := RemovePermissions(context.Background(), c, "admin", []map[string]any{{"action": "read_data"}}); err != nil {
 		t.Fatalf("RemovePermissions: %v", err)
 	}
 }
@@ -421,50 +422,50 @@ func TestUsersEndpoints(t *testing.T) {
 	c, cleanup := newTestClient(mux)
 	defer cleanup()
 
-	users, err := ListUsers(c)
+	users, err := ListUsers(context.Background(), c)
 	if err != nil || len(users) != 1 {
 		t.Fatalf("ListUsers: %v", err)
 	}
-	user, err := GetUser(c, "alice")
+	user, err := GetUser(context.Background(), c, "alice")
 	if err != nil || user.UserID != "alice" {
 		t.Fatalf("GetUser: %v (%v)", err, user)
 	}
-	if _, err := GetUser(c, ""); !client.IsNotFound(err) {
+	if _, err := GetUser(context.Background(), c, ""); !client.IsNotFound(err) {
 		t.Fatalf("GetUser('') expected NotFound, got %v", err)
 	}
-	apiKey, err := CreateUser(c, "bob")
+	apiKey, err := CreateUser(context.Background(), c, "bob")
 	if err != nil || apiKey != "secret-key-123" {
 		t.Fatalf("CreateUser: %v (key=%q)", err, apiKey)
 	}
-	if err := DeleteUser(c, "bob"); err != nil {
+	if err := DeleteUser(context.Background(), c, "bob"); err != nil {
 		t.Fatalf("DeleteUser: %v", err)
 	}
-	if err := DeleteUser(c, ""); !client.IsNotFound(err) {
+	if err := DeleteUser(context.Background(), c, ""); !client.IsNotFound(err) {
 		t.Fatalf("DeleteUser('') expected NotFound, got %v", err)
 	}
-	if err := AssignRoles(c, "alice", []string{"editor"}); err != nil {
+	if err := AssignRoles(context.Background(), c, "alice", []string{"editor"}); err != nil {
 		t.Fatalf("AssignRoles: %v", err)
 	}
-	if err := RevokeRoles(c, "alice", []string{"editor"}); err != nil {
+	if err := RevokeRoles(context.Background(), c, "alice", []string{"editor"}); err != nil {
 		t.Fatalf("RevokeRoles: %v", err)
 	}
-	if err := ActivateUser(c, "bob"); err != nil {
+	if err := ActivateUser(context.Background(), c, "bob"); err != nil {
 		t.Fatalf("ActivateUser: %v", err)
 	}
-	if err := DeactivateUser(c, "bob"); err != nil {
+	if err := DeactivateUser(context.Background(), c, "bob"); err != nil {
 		t.Fatalf("DeactivateUser: %v", err)
 	}
-	if err := ActivateUser(c, ""); !client.IsNotFound(err) {
+	if err := ActivateUser(context.Background(), c, ""); !client.IsNotFound(err) {
 		t.Fatalf("ActivateUser('') expected NotFound, got %v", err)
 	}
-	if err := DeactivateUser(c, ""); !client.IsNotFound(err) {
+	if err := DeactivateUser(context.Background(), c, ""); !client.IsNotFound(err) {
 		t.Fatalf("DeactivateUser('') expected NotFound, got %v", err)
 	}
-	apiKey, err = RotateUserKey(c, "bob")
+	apiKey, err = RotateUserKey(context.Background(), c, "bob")
 	if err != nil || apiKey != "rotated-key-456" {
 		t.Fatalf("RotateUserKey: %v (key=%q)", err, apiKey)
 	}
-	if _, err := RotateUserKey(c, ""); !client.IsNotFound(err) {
+	if _, err := RotateUserKey(context.Background(), c, ""); !client.IsNotFound(err) {
 		t.Fatalf("RotateUserKey('') expected NotFound, got %v", err)
 	}
 }
@@ -488,12 +489,12 @@ func TestNodesAndMetaEndpoints(t *testing.T) {
 	c, cleanup := newTestClient(mux)
 	defer cleanup()
 
-	nodes, err := ListNodes(c)
+	nodes, err := ListNodes(context.Background(), c)
 	if err != nil || len(nodes) != 1 || nodes[0].Name != "node-1" {
 		t.Fatalf("ListNodes: %v (%v)", err, nodes)
 	}
 
-	meta, err := GetMeta(c)
+	meta, err := GetMeta(context.Background(), c)
 	if err != nil || meta.Version != "1.40.1" {
 		t.Fatalf("GetMeta: %v (%v)", err, meta)
 	}
