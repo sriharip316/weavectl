@@ -8,7 +8,10 @@
 # module (e.g. the lighter make dev-up stack, and CI's service container),
 # so the same script serves those environments too.
 #
-# usage: scripts/integration.sh [run|s3-up|s3-down]
+# make dev-up/dev-down delegate here too: they run the lighter stack (a
+# single Weaviate with only the filesystem backup module, no MinIO).
+#
+# usage: scripts/integration.sh [run|dev-up|dev-down|s3-up|s3-down]
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -74,7 +77,40 @@ wait_backup() { # wait_backup <backend> <id> <path>: poll until the backup compl
 	exit 1
 }
 
-up() {
+# Weaviate env shared by both stacks: API-key auth, RBAC and db-user
+# management (the role/user commands need it) plus the filesystem backup
+# module. Each stack adds its own ENABLE_MODULES and backend config.
+WEAVIATE_ENV=(
+	-e AUTHENTICATION_APIKEY_ENABLED=true
+	-e AUTHENTICATION_APIKEY_ALLOWED_KEYS="$API_KEY"
+	-e AUTHENTICATION_APIKEY_USERS=admin@example.com
+	-e AUTHENTICATION_DB_USERS_ENABLED=true
+	-e AUTHORIZATION_RBAC_ENABLED=true
+	-e AUTHORIZATION_RBAC_ROOT_USERS=admin@example.com
+	-e DEFAULT_VECTORIZER_MODULE=none
+	-e BACKUP_FILESYSTEM_PATH=/tmp/weaviate-backups
+)
+
+dev_up() { # the default dev stack (make dev-up): a single Weaviate with
+	# only the filesystem backup module — the S3 checks skip against it.
+	command -v podman >/dev/null 2>&1 || { echo "podman is required" >&2; exit 1; }
+	# Both stacks bind 8080, so stop the MinIO one first if it is up.
+	podman rm -f weavectl-dev "$WEAVIATE_CONTAINER" >/dev/null 2>&1 || true
+	echo "starting weaviate ($IMAGE) with backup-filesystem..."
+	podman run -d --name weavectl-dev -p 8080:8080 \
+		"${WEAVIATE_ENV[@]}" \
+		-e ENABLE_MODULES=backup-filesystem \
+		"$IMAGE" >/dev/null
+	until curl -sf "${SERVER%/}/v1/.well-known/ready" >/dev/null 2>&1; do sleep 1; done
+	echo "Weaviate ready at $SERVER (api key: $API_KEY)"
+}
+
+dev_down() {
+	podman rm -f weavectl-dev >/dev/null 2>&1 || true
+}
+
+s3_up() { # the MinIO stack (make s3-up / make integration): MinIO plus
+	# Weaviate with backup-s3 against it.
 	command -v podman >/dev/null 2>&1 || { echo "podman is required" >&2; exit 1; }
 	# The stack binds 8080 like the default dev container (make dev-up),
 	# so stop that one first.
@@ -93,15 +129,8 @@ up() {
 
 	echo "starting weaviate ($IMAGE) with backup-s3 against minio..."
 	podman run -d --name "$WEAVIATE_CONTAINER" --network "$NETWORK" -p 8080:8080 \
-		-e AUTHENTICATION_APIKEY_ENABLED=true \
-		-e AUTHENTICATION_APIKEY_ALLOWED_KEYS="$API_KEY" \
-		-e AUTHENTICATION_APIKEY_USERS=admin@example.com \
-		-e AUTHENTICATION_DB_USERS_ENABLED=true \
-		-e AUTHORIZATION_RBAC_ENABLED=true \
-		-e AUTHORIZATION_RBAC_ROOT_USERS=admin@example.com \
-		-e DEFAULT_VECTORIZER_MODULE=none \
+		"${WEAVIATE_ENV[@]}" \
 		-e ENABLE_MODULES=backup-filesystem,backup-s3 \
-		-e BACKUP_FILESYSTEM_PATH=/tmp/weaviate-backups \
 		-e BACKUP_S3_BUCKET="$BUCKET" \
 		-e BACKUP_S3_ENDPOINT=minio:9000 \
 		-e BACKUP_S3_USE_SSL=false \
@@ -113,7 +142,7 @@ up() {
 	echo "Weaviate ready at $SERVER (api key: $API_KEY; s3 backend: bucket $BUCKET @ minio:9000)"
 }
 
-down() {
+s3_down() {
 	podman rm -f "$WEAVIATE_CONTAINER" "$MINIO_CONTAINER" >/dev/null 2>&1 || true
 	podman network rm "$NETWORK" >/dev/null 2>&1 || true
 }
@@ -339,11 +368,13 @@ run() { # the whole suite: the command surface, then the S3 backup checks.
 export WEAVECTL_SERVER="$SERVER" WEAVECTL_API_KEY="$API_KEY"
 
 case "${1:-run}" in
-s3-up) up; exit 0 ;;
-s3-down) down; exit 0 ;;
+dev-up) dev_up; exit 0 ;;
+dev-down) dev_down; exit 0 ;;
+s3-up) s3_up; exit 0 ;;
+s3-down) s3_down; exit 0 ;;
 run|"") run ;;
 *)
-	echo "usage: $0 {run|s3-up|s3-down}" >&2
+	echo "usage: $0 {run|dev-up|dev-down|s3-up|s3-down}" >&2
 	exit 2
 	;;
 esac

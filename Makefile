@@ -35,24 +35,13 @@ install: build
 # Run a local Weaviate with API-key auth, RBAC and db-user management
 # enabled — the configuration weavectl's role and user commands need —
 # plus the filesystem backup module the backup/restore commands need.
+# The container config itself lives in scripts/integration.sh (dev-up),
+# next to the MinIO stack it shares the auth/RBAC env with.
 dev-up:
-	podman rm -f weavectl-dev weavectl-s3-dev >/dev/null 2>&1 || true
-	podman run -d --name weavectl-dev -p 8080:8080 \
-	  -e AUTHENTICATION_APIKEY_ENABLED=true \
-	  -e AUTHENTICATION_APIKEY_ALLOWED_KEYS=$(ROOTKEY) \
-	  -e AUTHENTICATION_APIKEY_USERS=admin@example.com \
-	  -e AUTHENTICATION_DB_USERS_ENABLED=true \
-	  -e AUTHORIZATION_RBAC_ENABLED=true \
-	  -e AUTHORIZATION_RBAC_ROOT_USERS=admin@example.com \
-	  -e DEFAULT_VECTORIZER_MODULE=none \
-	  -e ENABLE_MODULES=backup-filesystem \
-	  -e BACKUP_FILESYSTEM_PATH=/tmp/weaviate-backups \
-	  $(IMAGE)
-	@until curl -sf http://localhost:8080/v1/.well-known/ready >/dev/null 2>&1; do sleep 1; done
-	@echo "Weaviate ready at http://localhost:8080 (api key: $(ROOTKEY))"
+	bash scripts/integration.sh dev-up
 
 dev-down:
-	podman rm -f weavectl-dev
+	bash scripts/integration.sh dev-down
 
 dev-logs:
 	podman logs -f weavectl-dev
