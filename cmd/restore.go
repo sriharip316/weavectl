@@ -41,7 +41,7 @@ or CANCELED and exits non-zero on failure.
 			if err != nil {
 				return err
 			}
-			c, err := newClient()
+			c, err := newClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -96,7 +96,7 @@ func newRestoreStatusCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c, err := newClient()
+			c, err := newClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -121,7 +121,7 @@ func newRestoreCancelCommand() *cobra.Command {
 		Short: "Cancel an in-progress restore",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := newClient()
+			c, err := newClient(cmd)
 			if err != nil {
 				return err
 			}

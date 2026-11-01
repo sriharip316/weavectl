@@ -31,7 +31,7 @@ The old key stops working immediately — update every consumer of it. The
 new key is printed exactly once, like create user; store it now.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := newClient()
+			c, err := newClient(cmd)
 			if err != nil {
 				return err
 			}

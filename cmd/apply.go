@@ -39,7 +39,7 @@ apply may issue several API calls, handled automatically:
 			if err != nil {
 				return err
 			}
-			c, err := newClient()
+			c, err := newClient(cmd)
 			if err != nil {
 				return err
 			}

@@ -40,7 +40,7 @@ already exists.`,
 			if err != nil {
 				return err
 			}
-			c, err := newClient()
+			c, err := newClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -224,7 +224,7 @@ func newCreateCollectionCommand() *cobra.Command {
 				body["multiTenancyConfig"] = map[string]any{"enabled": true}
 			}
 
-			c, err := newClient()
+			c, err := newClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -249,7 +249,7 @@ func newCreateUserCommand() *cobra.Command {
 		Short: "Create a db user and display its API key (shown once)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := newClient()
+			c, err := newClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -274,7 +274,7 @@ func newCreateAliasCommand() *cobra.Command {
 			if target == "" {
 				return fmt.Errorf("--collection is required")
 			}
-			c, err := newClient()
+			c, err := newClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -300,7 +300,7 @@ func newCreateTenantCommand() *cobra.Command {
 		Args:  cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			status, _ := cmd.Flags().GetString("activity-status")
-			c, err := newClient()
+			c, err := newClient(cmd)
 			if err != nil {
 				return err
 			}

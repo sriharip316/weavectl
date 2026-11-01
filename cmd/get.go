@@ -34,7 +34,7 @@ per backend with --backend.`,
 			if err != nil {
 				return err
 			}
-			c, err := newClient()
+			c, err := newClient(cmd)
 			if err != nil {
 				return err
 			}

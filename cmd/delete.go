@@ -32,7 +32,7 @@ No confirmation prompts; deleting a collection deletes all its data.`,
 			if err != nil {
 				return err
 			}
-			c, err := newClient()
+			c, err := newClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -83,7 +83,7 @@ func newDeleteTypedCommand(kind, short string, del func(*client.Client, string) 
 		Args:    cobra.ExactArgs(1),
 		Aliases: nil,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := newClient()
+			c, err := newClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -103,7 +103,7 @@ func newDeleteTenantCommand() *cobra.Command {
 		Short: "Delete tenants from a collection",
 		Args:  cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := newClient()
+			c, err := newClient(cmd)
 			if err != nil {
 				return err
 			}

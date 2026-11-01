@@ -51,7 +51,7 @@ or CANCELED and exits non-zero on failure.`,
 			if err != nil {
 				return err
 			}
-			c, err := newClient()
+			c, err := newClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -92,7 +92,7 @@ func newDeleteBackupCommand() *cobra.Command {
 			if err := weaviate.ValidateBackupID(id); err != nil {
 				return err
 			}
-			c, err := newClient()
+			c, err := newClient(cmd)
 			if err != nil {
 				return err
 			}

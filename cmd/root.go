@@ -19,14 +19,6 @@ import (
 // Version is the weavectl client version, set at build time via -ldflags.
 var Version = "dev"
 
-var (
-	flagServer   string
-	flagAPIKey   string
-	flagContext  string
-	flagConfig   string
-	flagNoConfig bool
-)
-
 func NewRootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "weavectl",
@@ -44,11 +36,11 @@ WEAVECTL_API_KEY environment variables, then the named context in
 	}
 
 	pf := root.PersistentFlags()
-	pf.StringVar(&flagServer, "server", "", "Weaviate base URL (default http://localhost:8080)")
-	pf.StringVar(&flagAPIKey, "api-key", "", "API key or bearer token (default $WEAVECTL_API_KEY)")
-	pf.StringVar(&flagContext, "context", "", "config file context to use")
-	pf.StringVar(&flagConfig, "config", "", "path to config file (default ~/.weavectl/config.yaml)")
-	pf.BoolVar(&flagNoConfig, "no-config", false, "ignore the config file entirely")
+	pf.String("server", "", "Weaviate base URL (default http://localhost:8080)")
+	pf.String("api-key", "", "API key or bearer token (default $WEAVECTL_API_KEY)")
+	pf.String("context", "", "config file context to use")
+	pf.String("config", "", "path to config file (default ~/.weavectl/config.yaml)")
+	pf.Bool("no-config", false, "ignore the config file entirely")
 
 	root.AddCommand(
 		newGetCommand(),
@@ -62,14 +54,22 @@ WEAVECTL_API_KEY environment variables, then the named context in
 	return root
 }
 
-// newClient resolves configuration and returns a ready API client.
-func newClient() (*client.Client, error) {
+// newClient resolves configuration for the executing command and returns a
+// ready API client. Flags are read from cmd so concurrent command executions
+// never share state.
+func newClient(cmd *cobra.Command) (*client.Client, error) {
+	f := cmd.Flags()
+	server, _ := f.GetString("server")
+	apiKey, _ := f.GetString("api-key")
+	contextName, _ := f.GetString("context")
+	configPath, _ := f.GetString("config")
+	noConfig, _ := f.GetBool("no-config")
 	cfg, err := config.Load(config.Options{
-		ServerFlag:   flagServer,
-		APIKeyFlag:   flagAPIKey,
-		ContextFlag:  flagContext,
-		ConfigPath:   flagConfig,
-		NoConfigFile: flagNoConfig,
+		ServerFlag:   server,
+		APIKeyFlag:   apiKey,
+		ContextFlag:  contextName,
+		ConfigPath:   configPath,
+		NoConfigFile: noConfig,
 	})
 	if err != nil {
 		return nil, err

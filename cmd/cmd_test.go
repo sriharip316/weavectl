@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -405,13 +406,6 @@ func (m *mockServer) handler() http.Handler {
 }
 
 func executeCommand(args []string) (string, string, error) {
-	// Reset package global flags before executing
-	flagServer = ""
-	flagAPIKey = ""
-	flagContext = ""
-	flagConfig = ""
-	flagNoConfig = false
-
 	cmd := NewRootCommand()
 	var stdout, stderr bytes.Buffer
 	cmd.SetOut(&stdout)
@@ -420,6 +414,51 @@ func executeCommand(args []string) (string, string, error) {
 
 	err := cmd.Execute()
 	return stdout.String(), stderr.String(), err
+}
+
+// TestCLI_ConcurrentExecuteNoRace pins the fix for the flag data race:
+// commands executed concurrently must each resolve their own --server and
+// never touch shared flag storage. Persistent flags are read through the
+// executing *cobra.Command, so this passes under -race; the pre-fix code
+// bound them to package-level globals and raced here immediately.
+func TestCLI_ConcurrentExecuteNoRace(t *testing.T) {
+	const n = 4
+	type execResult struct {
+		out  string
+		err  error
+		hits int32
+	}
+	results := make([]execResult, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		hits := &atomic.Int32{}
+		mock := newMockServer()
+		handler := mock.handler()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hits.Add(1)
+			handler.ServeHTTP(w, r)
+		}))
+		defer srv.Close()
+
+		wg.Go(func() {
+			out, _, err := executeCommand([]string{"version", "--server", srv.URL})
+			results[i] = execResult{out: out, err: err, hits: hits.Load()}
+		})
+	}
+	wg.Wait()
+
+	for i, r := range results {
+		if r.err != nil {
+			t.Errorf("concurrent execution %d failed: %v", i, r.err)
+			continue
+		}
+		if r.hits != 1 {
+			t.Errorf("concurrent execution %d: server received %d requests, want 1 (--server leaked across commands?)", i, r.hits)
+		}
+		if !strings.Contains(r.out, "Weaviate 1.40.1") {
+			t.Errorf("concurrent execution %d: unexpected output %q", i, r.out)
+		}
+	}
 }
 
 func TestCLI_Version(t *testing.T) {

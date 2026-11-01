@@ -16,7 +16,7 @@ func newVersionCommand() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
 			_, _ = fmt.Fprintf(out, "weavectl %s\n", Version)
-			c, err := newClient()
+			c, err := newClient(cmd)
 			if err != nil {
 				return err
 			}
